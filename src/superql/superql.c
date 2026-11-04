@@ -8,6 +8,15 @@
 #include <string.h>
 #include <time.h>
 
+/* Disk offsets past 2 GB: long is 32 bits on Windows. */
+#ifdef _WIN32
+#define disk_seek(f, o) _fseeki64(f, (__int64)(o), SEEK_SET)
+#define disk_size(f) (_fseeki64(f, 0, SEEK_END) ? -1 : (int64_t)_ftelli64(f))
+#else
+#define disk_seek(f, o) fseeko(f, (off_t)(o), SEEK_SET)
+#define disk_size(f) (fseeko(f, 0, SEEK_END) ? -1 : (int64_t)ftello(f))
+#endif
+
 #define MASTER_PAGE 0xFF00u
 #define LOWSW_PAGE  0xFF01u
 #define RTC_PAGE    0xFF02u
@@ -93,7 +102,7 @@ static uint32_t ide_lba(const sql_ide *d) {
 }
 
 static int ide_load(sql_ide *d) {
-    if (d->lba >= d->sectors || fseek(d->f, (long)d->lba * SQL_SECTOR, SEEK_SET) ||
+    if (d->lba >= d->sectors || disk_seek(d->f, (int64_t)d->lba * SQL_SECTOR) ||
         fread(d->buf, 1, SQL_SECTOR, d->f) != SQL_SECTOR) { d->err = 0x10; ide_status(d, 0x51); return -1; }
     d->pos = 0;
     ide_status(d, 0x58);                           /* ready, seek done, data request */
@@ -166,7 +175,7 @@ static void ide_data_write(sql_ide *d, uint16_t v) {
     ide_put_word(d->buf, d->pos, v);
     d->pos += 2;
     if (d->pos < SQL_SECTOR) return;
-    if (d->lba >= d->sectors || fseek(d->f, (long)d->lba * SQL_SECTOR, SEEK_SET) ||
+    if (d->lba >= d->sectors || disk_seek(d->f, (int64_t)d->lba * SQL_SECTOR) ||
         fwrite(d->buf, 1, SQL_SECTOR, d->f) != SQL_SECTOR) { d->err = 0x10; ide_status(d, 0x51); return; }
     fflush(d->f);
     d->pos = 0;
@@ -390,8 +399,8 @@ int sql_attach_disk(superql *s, const char *path, int read_only) {
     sql_ide *d = &s->ide;
     FILE *f = fopen(path, read_only ? "rb" : "r+b");
     if (!f) { fprintf(stderr, "superql: cannot open %s\n", path); return -1; }
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
+    int64_t n = disk_size(f);
+    if (n < 0) { fclose(f); fprintf(stderr, "superql: cannot size %s\n", path); return -1; }
     d->f = f;
     d->read_only = read_only;
     d->sectors = (uint32_t)(n / SQL_SECTOR);

@@ -7,6 +7,10 @@ A Sinclair QL emulator: one program, one window, two machines.
 
 The boards and the 68k core are our own C, written from the machines' documented registers and the SMSQ/E sources' hardware definitions. They began in AmiCradle; OpenQL is them on their own, without AmiCradle's manager.
 
+## Download
+
+Releases for Linux, Windows and macOS are on the Releases page. OpenQL draws in a window of its own on the host (F11 or `-F` for full screen): no browser.
+
 ## Build
 
 Needs a C compiler, SDL2 and Python 3 (for the ROM fetcher and the tests).
@@ -26,7 +30,7 @@ tools/openql-fetch-roms minerva     # Minerva 1.98j4 for the QL (GPL-2.0)
 tools/openql-fetch-roms smsqe       # SMSQ/E 3.43's Q40/Q60 build for the Super QL
 ```
 
-They go to `~/.local/share/openql/roms` (or `$OPENQL_ROMS`), where `openql` looks for them.
+They go to `~/.local/share/openql/roms` (`%APPDATA%\openql\roms` on Windows, or `$OPENQL_ROMS`), where `openql` looks for them.
 
 ## Run
 

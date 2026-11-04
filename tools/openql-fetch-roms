@@ -6,7 +6,8 @@
 IDs are those in roms.json (minerva, smsqe); none fetches them all. Each
 download and the ROM inside it are checked against roms.json's SHA-256 before
 the ROM is kept. They go to $OPENQL_ROMS, else $XDG_DATA_HOME/openql/roms,
-else ~/.local/share/openql/roms, where openql looks for them. --zip uses a
+else ~/.local/share/openql/roms (%APPDATA%/openql/roms on Windows),
+where openql looks for them. --zip uses a
 zip already downloaded instead of the network (one ID only).
 """
 import argparse
@@ -32,6 +33,8 @@ def catalogue() -> dict:
 def rom_dir() -> Path:
     if os.environ.get("OPENQL_ROMS"):
         return Path(os.environ["OPENQL_ROMS"])
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA") or Path.home()) / "openql/roms"
     data = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share")
     return Path(data) / "openql/roms"
 

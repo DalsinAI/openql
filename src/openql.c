@@ -7,7 +7,8 @@
  *   -M  the machine: ql (a 68008 QL, Minerva) or superql (the default: a
  *       Q40/Q60-compatible board with a 68040, SMSQ/E)
  *   -r  the Firmware/ROM. Without it, openql looks in $OPENQL_ROMS, then
- *       ~/.local/share/openql/roms, for the one tools/openql-fetch-roms fetched
+ *       ~/.local/share/openql/roms (%APPDATA%\openql\roms on Windows), for the
+ *       one tools/openql-fetch-roms fetched
  *   -m  RAM: KB on the QL (128 stock, up to 896; 640 by default), MB on the
  *       Super QL (up to 128, the default)
  *   -w  WIN1 on the Super QL: a QXL.WIN file is a whole QL hard disk (-R: read only)
@@ -189,10 +190,15 @@ static const char *default_rom(void) {
         snprintf(path, sizeof path, "%s/%s", dir, name);
         if (access(path, R_OK) == 0) return path;
     }
+#ifdef _WIN32
+    const char *appdata = getenv("APPDATA");
+    snprintf(path, sizeof path, "%s/openql/roms/%s", appdata ? appdata : ".", name);
+#else
     const char *home = getenv("HOME");
     const char *data = getenv("XDG_DATA_HOME");
     if (data && *data) snprintf(path, sizeof path, "%s/openql/roms/%s", data, name);
     else snprintf(path, sizeof path, "%s/.local/share/openql/roms/%s", home ? home : ".", name);
+#endif
     return access(path, R_OK) == 0 ? path : NULL;
 }
 

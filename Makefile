@@ -3,7 +3,8 @@
 
 CC      ?= cc
 CFLAGS  ?= -O2 -g
-CFLAGS  += -std=gnu11 -Wall -Wno-unused-function -Isrc
+CFLAGS  += -std=gnu11 -Wall -Wno-unused-function -D_FILE_OFFSET_BITS=64 -Isrc
+LDLIBS  ?=
 SDL_CFLAGS := $(shell pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags)
 SDL_LIBS   := $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs)
 PREFIX  ?= /usr/local
@@ -16,7 +17,7 @@ SQL     = src/superql/superql.c
 all: openql
 
 openql: src/openql.c $(QL) $(SQL) $(CPU_DEP) src/ql/ql.h src/superql/superql.h
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/openql.c $(QL) $(SQL) $(CPU) $(SDL_LIBS) -lm -o $@
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/openql.c $(QL) $(SQL) $(CPU) $(SDL_LIBS) -lm $(LDLIBS) -o $@
 
 qlrun: src/ql/qlrun.c $(QL) $(CPU_DEP) src/ql/ql.h
 	$(CC) $(CFLAGS) src/ql/qlrun.c $(QL) $(CPU) -lm -o $@
