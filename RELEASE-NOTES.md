@@ -9,6 +9,6 @@ No ROM is included. Fetch them on request with `openql-fetch-roms minerva` and `
 | --- | --- |
 | `openql-linux-x86_64.tar.gz` | Linux x86-64 (needs SDL2: `sudo apt install libsdl2-2.0-0`) |
 | `openql-windows-x86_64.zip` | Windows 10 and 11, x86-64 (SDL2 included) |
-| `openql-macos-arm64.tar.gz` | macOS on Apple silicon (SDL2 included; the first time, right-click and Open) |
+| `openql-macos-x86_64.tar.gz` | macOS on Intel, and Apple silicon through Rosetta (SDL2 included; the first time, right-click and Open) |
 
 Not yet: floppies, microdrives, sound, the network, serial input.

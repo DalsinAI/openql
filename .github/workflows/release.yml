@@ -66,7 +66,7 @@ jobs:
         with: { name: windows, path: openql-windows-x86_64.zip }
 
   macos:
-    runs-on: macos-14
+    runs-on: macos-15-intel   # the FPU needs an 80-bit long double (x86-64) or IEEE quad (Linux ARM64); macOS ARM64 has neither
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +74,7 @@ jobs:
       - run: make openql qlrun CC=clang && make test CC=clang
       - name: Package (SDL2 beside the program)
         run: |
-          d=openql-macos-arm64
+          d=openql-macos-x86_64
           mkdir -p $d
           cp openql qlrun roms.json README.md LICENSE $d/
           cp tools/openql-fetch-roms $d/
@@ -85,7 +85,7 @@ jobs:
           otool -L $d/openql
           tar czf $d.tar.gz $d
       - uses: actions/upload-artifact@v4
-        with: { name: macos, path: openql-macos-arm64.tar.gz }
+        with: { name: macos, path: openql-macos-x86_64.tar.gz }
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
