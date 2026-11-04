@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -38,14 +37,14 @@ static uint32_t ipc(ql *q, int cmd, uint32_t param, int pbits, int rbits) {
 }
 
 int main(void) {
-    char rom_path[] = "/tmp/ql_test_romXXXXXX";
-    int fd = mkstemp(rom_path);
+    const char *rom_path = "ql_test_rom.bin";    /* in the current folder: Windows has no /tmp */
     uint8_t rom[12] = { 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x60, 0xfe, 0x4e, 0x71 };   /* SSP $30000, PC 8: BRA.S * */
-    if (fd < 0 || write(fd, rom, sizeof rom) != (ssize_t)sizeof rom) return 2;
-    close(fd);
+    FILE *rf = fopen(rom_path, "wb");
+    if (!rf || fwrite(rom, 1, sizeof rom, rf) != sizeof rom) return 2;
+    fclose(rf);
     static ql q;
     if (ql_init(&q, rom_path, NULL, 640)) return 2;
-    unlink(rom_path);
+    remove(rom_path);
 
     /* the map */
     CHECK(rd(&q, 0, 4) == 0x00030000u, "the reset SSP from the ROM");
