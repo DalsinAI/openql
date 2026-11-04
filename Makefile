@@ -12,11 +12,11 @@ PREFIX  ?= /usr/local
 CPU     = src/cpu/ac090.c
 CPU_DEP = $(CPU) src/cpu/ac090.h src/cpu/ac090_mmu.c src/cpu/ac090_fpu.c src/cpu/fpu_special.h
 QL      = src/ql/ql.c
-SQL     = src/superql/superql.c
+SQL     = src/superql/superql.c src/superql/fdc.c
 
 all: openql
 
-openql: src/openql.c $(QL) $(SQL) $(CPU_DEP) src/ql/ql.h src/superql/superql.h
+openql: src/openql.c $(QL) $(SQL) $(CPU_DEP) src/ql/ql.h src/superql/superql.h src/superql/fdc.h
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) src/openql.c $(QL) $(SQL) $(CPU) $(SDL_LIBS) -lm $(LDLIBS) -o $@
 
 qlrun: src/ql/qlrun.c $(QL) $(CPU_DEP) src/ql/ql.h
@@ -25,12 +25,16 @@ qlrun: src/ql/qlrun.c $(QL) $(CPU_DEP) src/ql/ql.h
 tests/ql_test: src/ql/ql_test.c $(QL) $(CPU_DEP) src/ql/ql.h
 	$(CC) $(CFLAGS) src/ql/ql_test.c $(QL) $(CPU) -lm -o $@
 
-tests/superql_test: src/superql/superql_test.c $(SQL) $(CPU_DEP) src/superql/superql.h
+tests/superql_test: src/superql/superql_test.c $(SQL) $(CPU_DEP) src/superql/superql.h src/superql/fdc.h
 	$(CC) $(CFLAGS) src/superql/superql_test.c $(SQL) $(CPU) -lm -o $@
 
-test: tests/ql_test tests/superql_test
+tests/fdc_test: tests/fdc_test.c src/superql/fdc.c src/superql/fdc.h
+	$(CC) $(CFLAGS) tests/fdc_test.c src/superql/fdc.c -o $@
+
+test: tests/ql_test tests/superql_test tests/fdc_test
 	./tests/ql_test
 	./tests/superql_test
+	./tests/fdc_test
 	python3 -I tests/test_fetch_roms.py
 
 install: openql
@@ -39,6 +43,6 @@ install: openql
 	install -D -m 644 roms.json $(DESTDIR)$(PREFIX)/share/openql/roms.json
 
 clean:
-	rm -f openql qlrun tests/ql_test tests/superql_test
+	rm -f openql qlrun tests/ql_test tests/superql_test tests/fdc_test
 
 .PHONY: all test install clean

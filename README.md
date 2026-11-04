@@ -3,7 +3,7 @@
 A Sinclair QL emulator: one program, one window, two machines.
 
 - **Sinclair QL**: a PAL QL, its 68008 at 7.5 MHz, the ZX8301 display, the ZX8302 and its IPC keyboard. It runs Minerva, the open replacement for QDOS, up to 896 KB of RAM.
-- **Super QL**: a Q40/Q60-compatible board with a 68040 at 40 MHz and 128 MB, the most any QL-family machine had. It runs SMSQ/E with its pointer environment, a serial mouse, a WIN1 hard disk (a QXL.WIN file) and 16-bit colour up to 1024 x 512.
+- **Super QL**: a Q40/Q60-compatible board with a 68040 at 40 MHz and 128 MB, the most any QL-family machine had. It runs SMSQ/E with its pointer environment, a serial mouse, a WIN1 hard disk (a QXL.WIN file), two floppy drives, sound and 16-bit colour up to 1024 x 512.
 
 The boards and the 68k core are our own C, written from the machines' documented registers and the SMSQ/E sources' hardware definitions. They began in AmiCradle; OpenQL is them on their own, without AmiCradle's manager.
 
@@ -37,6 +37,7 @@ They go to `~/.local/share/openql/roms` (`%APPDATA%\openql\roms` on Windows, or 
 ```sh
 ./openql                            # the Super QL with SMSQ/E
 ./openql -w QXL.WIN                 # ... with a QL hard disk as WIN1 (-R: read only)
+./openql -f games.img               # ... with a QL floppy image in FLP1_ (a second -f: FLP2_)
 ./openql -M ql                      # a QL with Minerva: F1 or F2, then SuperBASIC
 ./openql -M ql -m 128               # a stock 128 KB QL
 ```
@@ -47,16 +48,17 @@ They go to `~/.local/share/openql/roms` (`%APPDATA%\openql\roms` on Windows, or 
 | `-r ROM` | A Firmware/ROM of your own instead of the fetched one |
 | `-m RAM` | KB on the QL (128 to 896, 640 by default), MB on the Super QL (up to 128) |
 | `-w FILE`, `-R` | The Super QL's WIN1: a QXL.WIN file; `-R` read only |
+| `-f FILE` | A floppy image in the Super QL's FLP1_, a second in FLP2_: raw, 720 KB, 1.44 MB or 2.88 MB. A read-only file is a write-protected disk; an empty file is a blank disk to FORMAT |
 | `-c FILE` | A 16 KB cartridge in the QL's ROM port |
 | `-s FILE`, `-p FILE` | ser1 (COM1) and the Super QL's LPT1 output |
-| `-F` | Full screen |
+| `-F`, `-q` | Full screen; no sound |
 | `-H SECONDS`, `-o FILE.ppm` | No window: run that long as fast as the host goes, then save the screen (tests) |
 
-In the window: **F11** full screen, **Ctrl+F12** the reset button, **Ctrl+Shift+F12** a power cycle, **Ctrl+F10** pause. The QL has no Backspace or Delete, so those keys send CTRL with left or right, as QL typists did. F6 to F10 are SHIFT with F1 to F5. On the Super QL the host's pointer over the window moves SMSQ/E's pointer.
+In the window: **F11** full screen, **Ctrl+F12** the reset button, **Ctrl+Shift+F12** a power cycle, **Ctrl+F10** pause, **Ctrl+F9** takes the disk out of FLP1_ (with Shift, FLP2_). Drop a floppy image on the window to put it in FLP1_ (hold Shift for FLP2_). The QL has no Backspace or Delete, so those keys send CTRL with left or right, as QL typists did. F6 to F10 are SHIFT with F1 to F5. On the Super QL the host's pointer over the window moves SMSQ/E's pointer.
 
 ## What is not done yet
 
-Floppies, microdrive cartridges, sound, the network, and serial input from the host. See `docs/` for each board.
+The QL's microdrives and disks, the Super QL floppy controller's interrupt, the network, and serial input from the host. The QL's BEEP plays its pitch only (no sweeps or fuzz). See `docs/` for each board.
 
 ## Layout
 

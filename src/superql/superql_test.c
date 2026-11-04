@@ -147,6 +147,7 @@ int main(void) {
 
     /* the serial mouse on COM2, as SMSQ/E's com_check and com_mouse find it */
 #define COM2(r) (0xff400000 + ((0x2f8 + (r)) << 2) + 1)
+#define ISA(p) (0xff400000 + ((p) << 2) + 1)
     wr(&s, COM2(2), 0x00, 1);                         /* FIFOs off: IIR bit 7 clear */
     CHECK(!(rd(&s, COM2(2), 1) & 0x80), "com_check: FIFO off reads bit 7 clear");
     wr(&s, COM2(2), 0x01, 1);
@@ -188,6 +189,40 @@ int main(void) {
     sql_render(&s, pic);
     CHECK(pic[0] == 0xff0000, "16-bit red (%06x)", pic[0]);
     CHECK(pic[SQL_OUT_W + 1] == 0x00ff00, "16-bit green at 1,1 (%06x)", pic[SQL_OUT_W + 1]);
+
+    /* sound: the sample interrupt at level 6, 20 kHz, and the DACs' samples */
+    {
+        static const uint16_t ack[] = { 0x52b9, 0x0002, 0x8108,   /* addq.l #1,$28108 */
+                                        0x50f9, 0xff00, 0x0028,   /* st q40_sack */
+                                        0x4e73 };                 /* rte */
+        for (int i = 0; i < 7; i++) { s.ram[0x28200 + 2 * i] = (uint8_t)(ack[i] >> 8); s.ram[0x28201 + 2 * i] = (uint8_t)ack[i]; }
+        s.ram[0x78] = 0x00; s.ram[0x79] = 0x02; s.ram[0x7a] = 0x82; s.ram[0x7b] = 0x00;   /* level 6 autovector (VBR 0) */
+        int16_t got[2 * 1024];
+        sql_audio_read(&s, got, 1024);
+        wr(&s, 0xff008000, 0xc0, 1);
+        wr(&s, 0xff008004, 0x40, 1);
+        wr(&s, 0xff000014, 1, 1);
+        sql_run(&s, s.cpu.clock + SQL_FRAME_CLOCKS);
+        int n = sql_audio_read(&s, got, 1024);
+        CHECK(sql_audio_rate(&s) == 20000, "20 kHz at reset");
+        CHECK(n >= 399 && n <= 401, "a frame of samples at 20 kHz (%d)", n);
+        CHECK(n > 0 && got[0] == 0x4000 && got[1] == -0x4000, "the DACs as signed samples (%d %d)", got[0], got[1]);
+        uint32_t taken = rd(&s, 0x28108, 4);
+        CHECK(taken >= 399 && taken <= 401, "each sample interrupt taken once and acknowledged (%u)", taken);
+        wr(&s, 0xff00002c, 1, 1);
+        CHECK(sql_audio_rate(&s) == 40000, "40 kHz");
+        wr(&s, 0xff000014, 0, 1);
+        sql_run(&s, s.cpu.clock + SQL_FRAME_CLOCKS);
+        CHECK(sql_audio_read(&s, got, 1024) == 0, "no samples with the sample interrupt off");
+    }
+
+    /* the floppy controller at $3F0: out of reset, VERSION */
+    {
+        wr(&s, ISA(0x3f2), 0x1c, 1);
+        CHECK(rd(&s, ISA(0x3f4), 1) == 0x80, "FDC ready for a command (MSR %02x)", rd(&s, ISA(0x3f4), 1));
+        wr(&s, ISA(0x3f5), 0x10, 1);
+        CHECK(rd(&s, ISA(0x3f4), 1) == 0xd0 && rd(&s, ISA(0x3f5), 1) == 0x90, "VERSION through the ISA ports");
+    }
 
     sql_free(&s);
     remove(rom); remove(disk);

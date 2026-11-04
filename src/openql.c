@@ -1,8 +1,9 @@
 /*
  * openql: a Sinclair QL or a Super QL in one window, as a single program.
  *
- *   openql [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-c CART]
- *          [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-H SECONDS [-o FRAME.ppm]]
+ *   openql [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]]
+ *          [-c CART] [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-q]
+ *          [-H SECONDS [-o FRAME.ppm]]
  *
  *   -M  the machine: ql (a 68008 QL, Minerva) or superql (the default: a
  *       Q40/Q60-compatible board with a 68040, SMSQ/E)
@@ -12,16 +13,21 @@
  *   -m  RAM: KB on the QL (128 stock, up to 896; 640 by default), MB on the
  *       Super QL (up to 128, the default)
  *   -w  WIN1 on the Super QL: a QXL.WIN file is a whole QL hard disk (-R: read only)
+ *   -f  a floppy image in the Super QL's FLP1_ (a second -f: FLP2_): a raw QL
+ *       floppy, 720 KB, 1.44 MB or 2.88 MB (a read-only file is write protected)
  *   -c  a 16 KB ROM cartridge for the QL's ROM port
  *   -p  the Super QL's LPT1 output goes to this file
  *   -s  ser1's (COM1's) output goes to this file
  *   -F  start full screen
+ *   -q  no sound
  *   -H  run without a window for this many seconds, then stop (tests); -o
  *       writes the last frame there as a PPM
  *
  * In the window: F11 full screen, Ctrl+F12 the reset button (RAM kept),
- * Ctrl+Shift+F12 a power cycle, Ctrl+F10 pause. On the Super QL the host's
- * pointer over the window moves SMSQ/E's pointer through the serial mouse.
+ * Ctrl+Shift+F12 a power cycle, Ctrl+F10 pause, Ctrl+F9 takes the disk out
+ * of FLP1_ (Ctrl+Shift+F9: FLP2_). A file dropped on the window goes into
+ * FLP1_ (FLP2_ with Shift held). On the Super QL the host's pointer over the
+ * window moves SMSQ/E's pointer through the serial mouse.
  *
  * The machine keeps pace with real time: one 50 Hz frame of CPU clocks each
  * 20 ms (150,000 for the QL's 68008 at 7.5 MHz, 800,000 for the Super QL's
@@ -214,6 +220,47 @@ static void save_ppm(const char *path, const uint32_t *rgb) {
     fclose(f);
 }
 
+/* ---- sound ------------------------------------------------------------------ */
+
+/* The host plays at 48 kHz. The Super QL's DACs come at their sample rate
+ * through an SDL audio stream; the QL's BEEP is made here, a square wave
+ * at the IPC's first pitch (about 11447 / (10.6 + pitch) Hz). The queue is
+ * kept short, so the sound stays with the picture. */
+#define HOST_RATE 48000
+static SDL_AudioDeviceID audio;
+static SDL_AudioStream *astream;
+static unsigned astream_rate;
+static double beep_phase;
+
+static void sound_frame(void) {
+    if (!audio) return;
+    if (SDL_GetQueuedAudioSize(audio) > HOST_RATE / 10 * 4) return;   /* more than 100 ms waiting: drop a frame's */
+    static int16_t buf[2 * 4096];
+    if (machine == M_SUPERQL) {
+        unsigned rate = sql_audio_rate(&s);
+        if (!astream || rate != astream_rate) {
+            if (astream) SDL_FreeAudioStream(astream);
+            astream = SDL_NewAudioStream(AUDIO_S16SYS, 2, (int)rate, AUDIO_S16SYS, 2, HOST_RATE);
+            astream_rate = rate;
+            if (!astream) return;
+        }
+        int n;
+        while ((n = sql_audio_read(&s, buf, 4096)) > 0) SDL_AudioStreamPut(astream, buf, n * 4);
+        while ((n = SDL_AudioStreamGet(astream, buf, sizeof buf)) > 0) SDL_QueueAudio(audio, buf, (Uint32)n);
+        return;
+    }
+    if (!q.ipc.sound_on) { beep_phase = 0; return; }
+    const int n = HOST_RATE / 50;
+    double hz = 11447.0 / (10.6 + q.ipc.pitch1);
+    for (int i = 0; i < n; i++) {
+        int16_t v = beep_phase < 0.5 ? 6000 : -6000;
+        buf[2 * i] = buf[2 * i + 1] = v;
+        beep_phase += hz / HOST_RATE;
+        if (beep_phase >= 1) beep_phase -= 1;
+    }
+    SDL_QueueAudio(audio, buf, (Uint32)(n * 4));
+}
+
 /* ---- the Super QL's mouse ------------------------------------------------- */
 
 /* The host's pointer over the picture becomes mouse movement: a QL mode's
@@ -234,15 +281,15 @@ static void aim(int x, int y) {
 /* ---- main ---------------------------------------------------------------- */
 
 static void usage(void) {
-    fprintf(stderr, "usage: openql [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-c CART]\n"
-                    "              [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-H SECONDS [-o FRAME.ppm]]\n");
+    fprintf(stderr, "usage: openql [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]]\n"
+                    "              [-c CART] [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-q] [-H SECONDS [-o FRAME.ppm]]\n");
 }
 
 int main(int argc, char **argv) {
-    const char *rom = NULL, *win1 = NULL, *cart = NULL, *prn = NULL, *ser = NULL, *dump = NULL;
-    int ram = -1, ro = 0, full = 0, opt;
+    const char *rom = NULL, *win1 = NULL, *cart = NULL, *prn = NULL, *ser = NULL, *dump = NULL, *flp[2] = { NULL, NULL };
+    int ram = -1, ro = 0, full = 0, quiet = 0, nflp = 0, opt;
     double headless = 0;
-    while ((opt = getopt(argc, argv, "M:r:m:w:Rc:p:s:FH:o:h")) != -1) {
+    while ((opt = getopt(argc, argv, "M:r:m:w:Rf:c:p:s:FqH:o:h")) != -1) {
         switch (opt) {
         case 'M':
             if (!strcmp(optarg, "ql")) machine = M_QL;
@@ -253,6 +300,8 @@ int main(int argc, char **argv) {
         case 'm': ram = atoi(optarg); break;
         case 'w': win1 = optarg; break;
         case 'R': ro = 1; break;
+        case 'f': if (nflp < 2) flp[nflp++] = optarg; break;
+        case 'q': quiet = 1; break;
         case 'c': cart = optarg; break;
         case 'p': prn = optarg; break;
         case 's': ser = optarg; break;
@@ -273,7 +322,7 @@ int main(int argc, char **argv) {
     keymap_init();
     const char *title;
     if (machine == M_QL) {
-        if (win1) fprintf(stderr, "openql: the QL has no hard disk yet; -w is for the Super QL\n");
+        if (win1 || nflp) fprintf(stderr, "openql: the QL has no disks yet; -w and -f are for the Super QL\n");
         if (ql_init(&q, rom, cart, (uint32_t)(ram > 0 ? ram : 640))) return 1;
         q.ser_out = serial_out;
         title = "OpenQL · Sinclair QL";
@@ -281,6 +330,7 @@ int main(int argc, char **argv) {
     } else {
         if (sql_init(&s, rom, (uint32_t)(ram > 0 ? ram : (int)SQL_MAX_RAM_MB))) return 1;
         if (win1 && sql_attach_disk(&s, win1, ro)) return 1;
+        for (int i = 0; i < nflp; i++) if (sql_insert_floppy(&s, i, flp[i], 0)) return 1;
         s.ser_out = serial_out;
         s.par_out = printer_out;
         title = "OpenQL · Super QL";
@@ -302,6 +352,14 @@ int main(int argc, char **argv) {
     }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) { fprintf(stderr, "openql: %s\n", SDL_GetError()); return 1; }
+    if (!quiet && SDL_InitSubSystem(SDL_INIT_AUDIO) == 0) {
+        SDL_AudioSpec want = { 0 }, have;
+        want.freq = HOST_RATE; want.format = AUDIO_S16SYS; want.channels = 2; want.samples = 1024;
+        audio = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+        if (audio) SDL_PauseAudioDevice(audio, 0);
+        else fprintf(stderr, "openql: no sound: %s\n", SDL_GetError());
+    }
+    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     /* A QL drew its picture on a 4:3 television or monitor, whatever its mode. */
     SDL_Window *win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1024, 768,
                                        SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (full ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
@@ -339,6 +397,14 @@ int main(int argc, char **argv) {
                     }
                     break;
                 }
+                if (sc == SDL_SCANCODE_F9 && ctrl) {
+                    if (down && !e.key.repeat && machine == M_SUPERQL) {
+                        int drive = (e.key.keysym.mod & KMOD_SHIFT) ? 1 : 0;
+                        sql_eject_floppy(&s, drive);
+                        fprintf(stderr, "openql: FLP%d_ is empty\n", drive + 1);
+                    }
+                    break;
+                }
                 if (sc == SDL_SCANCODE_F10 && ctrl) {
                     if (down && !e.key.repeat) { paused = !paused; SDL_SetWindowTitle(win, paused ? "OpenQL · paused" : title); }
                     break;
@@ -350,9 +416,8 @@ int main(int argc, char **argv) {
             }
             case SDL_MOUSEMOTION:
                 if (machine == M_SUPERQL) {
-                    float lx, ly;   /* the window's pixels onto the picture's */
-                    SDL_RenderWindowToLogical(ren, e.motion.x, e.motion.y, &lx, &ly);
-                    aim((int)(lx * w / 1024), (int)(ly * h / 768));
+                    /* with a logical size set, SDL gives the motion in its 1024 x 768 already */
+                    aim(e.motion.x * w / 1024, e.motion.y * h / 768);
                 }
                 break;
             case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP:
@@ -360,6 +425,14 @@ int main(int argc, char **argv) {
                     Uint32 b = SDL_GetMouseState(NULL, NULL);
                     sql_mouse_buttons(&s, (uint8_t)((b & SDL_BUTTON_LMASK ? 1 : 0) | (b & SDL_BUTTON_RMASK ? 2 : 0)));
                 }
+                break;
+            case SDL_DROPFILE:
+                if (machine == M_SUPERQL) {
+                    int drive = (SDL_GetModState() & KMOD_SHIFT) ? 1 : 0;
+                    if (sql_insert_floppy(&s, drive, e.drop.file, 0) == 0)
+                        fprintf(stderr, "openql: %s in FLP%d_\n", e.drop.file, drive + 1);
+                }
+                SDL_free(e.drop.file);
                 break;
             case SDL_WINDOWEVENT:
                 if (e.window.event == SDL_WINDOWEVENT_LEAVE) aim_x = aim_y = -1;
@@ -375,6 +448,7 @@ int main(int argc, char **argv) {
             }
             render(pic);
             SDL_UpdateTexture(tex, NULL, pic, w * 4);
+            sound_frame();
         }
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, NULL, NULL);
@@ -386,6 +460,8 @@ int main(int argc, char **argv) {
     }
     if (machine == M_QL) ql_free(&q);
     else sql_free(&s);
+    if (audio) SDL_CloseAudioDevice(audio);
+    if (astream) SDL_FreeAudioStream(astream);
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
