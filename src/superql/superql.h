@@ -29,6 +29,10 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
+#ifdef _WIN32
+#define localtime_r(t, tm) localtime_s(tm, t)   /* Windows has the same with its arguments the other way round */
+#endif
 #include "../cpu/ac090.h"
 
 #define SQL_CLOCK_HZ      40000000u              /* the Q40's 68040 at 40 MHz */

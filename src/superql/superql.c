@@ -10,7 +10,6 @@
 
 /* Disk offsets past 2 GB: long is 32 bits on Windows. */
 #ifdef _WIN32
-#define localtime_r(t, tm) localtime_s(tm, t)
 #define disk_seek(f, o) _fseeki64(f, (__int64)(o), SEEK_SET)
 #define disk_size(f) (_fseeki64(f, 0, SEEK_END) ? -1 : (int64_t)_ftelli64(f))
 #else
