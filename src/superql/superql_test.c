@@ -11,7 +11,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -44,12 +43,12 @@ static void ser_out(void *o, int port, uint8_t ch) { (void)o; if (port == 0 && n
 static void par_out(void *o, uint8_t ch) { (void)o; if (nprn < 63) prn[nprn++] = (char)ch; }
 
 int main(void) {
-    char rom[] = "/tmp/superql_test_rom_XXXXXX", disk[] = "/tmp/superql_test_disk_XXXXXX";
-    int fd = mkstemp(rom);
+    const char *rom = "superql_test_rom.bin", *disk = "superql_test_disk.win";   /* the current folder: Windows has no /tmp */
     uint8_t img[sizeof boot];
     for (size_t i = 0; i < sizeof boot / 2; i++) { img[2 * i] = (uint8_t)(boot[i] >> 8); img[2 * i + 1] = (uint8_t)boot[i]; }
-    if (write(fd, img, sizeof img) != (ssize_t)sizeof img) return 1;
-    close(fd);
+    FILE *wf = fopen(rom, "wb");
+    if (!wf || fwrite(img, 1, sizeof img, wf) != sizeof img) return 1;
+    fclose(wf);
 
     static superql s;
     CHECK(sql_init(&s, rom, 128) == 0, "init");
@@ -112,12 +111,12 @@ int main(void) {
 
     /* IDE: no disk, then a disk */
     CHECK(rd(&s, 0xff400000 + (0x1f7 << 2) + 1, 1) == 0, "no disk: status 0");
-    fd = mkstemp(disk);
     static uint8_t sec512[512 * 8];
     for (int i = 0; i < (int)sizeof sec512; i++) sec512[i] = (uint8_t)(i / 512 * 16 + (i & 15));
     memcpy(sec512 + 1024, "QLWA", 4);
-    if (write(fd, sec512, sizeof sec512) != (ssize_t)sizeof sec512) return 1;
-    close(fd);
+    wf = fopen(disk, "wb");
+    if (!wf || fwrite(sec512, 1, sizeof sec512, wf) != sizeof sec512) return 1;
+    fclose(wf);
     CHECK(sql_attach_disk(&s, disk, 0) == 0, "attach");
     uint32_t io = 0xff400000;
 #define IDE(port) (io + ((port) << 2) + 1)
@@ -191,7 +190,7 @@ int main(void) {
     CHECK(pic[SQL_OUT_W + 1] == 0x00ff00, "16-bit green at 1,1 (%06x)", pic[SQL_OUT_W + 1]);
 
     sql_free(&s);
-    unlink(rom); unlink(disk);
+    remove(rom); remove(disk);
     printf("%s (%d failed)\n", fails ? "FAIL" : "ok", fails);
     return fails != 0;
 }
