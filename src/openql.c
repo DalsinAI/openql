@@ -416,9 +416,8 @@ int main(int argc, char **argv) {
             }
             case SDL_MOUSEMOTION:
                 if (machine == M_SUPERQL) {
-                    float lx, ly;   /* the window's pixels onto the picture's */
-                    SDL_RenderWindowToLogical(ren, e.motion.x, e.motion.y, &lx, &ly);
-                    aim((int)(lx * w / 1024), (int)(ly * h / 768));
+                    /* with a logical size set, SDL gives the motion in its 1024 x 768 already */
+                    aim(e.motion.x * w / 1024, e.motion.y * h / 768);
                 }
                 break;
             case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP:
