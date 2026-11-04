@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Fetch the Firmware/ROMs OpenQL runs, on request, from their own projects.
+
+    openql-fetch-roms [--dir DIR] [--zip FILE] [ID ...]
+
+IDs are those in roms.json (minerva, smsqe); none fetches them all. Each
+download and the ROM inside it are checked against roms.json's SHA-256 before
+the ROM is kept. They go to $OPENQL_ROMS, else $XDG_DATA_HOME/openql/roms,
+else ~/.local/share/openql/roms, where openql looks for them. --zip uses a
+zip already downloaded instead of the network (one ID only).
+"""
+import argparse
+import hashlib
+import io
+import json
+import os
+import sys
+import urllib.request
+import zipfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+
+def catalogue() -> dict:
+    for p in (HERE.parent / "roms.json", HERE.parent / "share/openql/roms.json"):
+        if p.is_file():
+            return json.loads(p.read_text())
+    sys.exit("openql-fetch-roms: no roms.json beside the tool")
+
+
+def rom_dir() -> Path:
+    if os.environ.get("OPENQL_ROMS"):
+        return Path(os.environ["OPENQL_ROMS"])
+    data = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share")
+    return Path(data) / "openql/roms"
+
+
+def sha256(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()
+
+
+def extract(rom: dict, archive: bytes) -> bytes:
+    """The ROM out of its archive, both checked against the catalogue."""
+    if sha256(archive) != rom["sha256"]:
+        raise ValueError(f"{rom['id']}: the download's SHA-256 is {sha256(archive)}, not {rom['sha256']}")
+    with zipfile.ZipFile(io.BytesIO(archive)) as z:
+        names = [n for n in z.namelist() if n.rsplit("/", 1)[-1] == rom["member"]]
+        if not names:
+            raise ValueError(f"{rom['id']}: no {rom['member']} in the archive")
+        data = z.read(names[0])
+    if len(data) != rom["romBytes"] or sha256(data) != rom["romSha256"]:
+        raise ValueError(f"{rom['id']}: {rom['member']} is not the ROM roms.json names")
+    return data
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="Fetch OpenQL's Firmware/ROMs on request.")
+    ap.add_argument("ids", nargs="*")
+    ap.add_argument("--dir", type=Path)
+    ap.add_argument("--zip", type=Path)
+    a = ap.parse_args(argv)
+    roms = {r["id"]: r for r in catalogue()["roms"]}
+    ids = a.ids or list(roms)
+    unknown = [i for i in ids if i not in roms]
+    if unknown:
+        sys.exit(f"openql-fetch-roms: no ROM {', '.join(unknown)} (there are {', '.join(roms)})")
+    if a.zip and len(ids) != 1:
+        sys.exit("openql-fetch-roms: --zip takes one ID")
+    out = a.dir or rom_dir()
+    out.mkdir(parents=True, exist_ok=True)
+    failed = 0
+    for i in ids:
+        rom = roms[i]
+        dest = out / rom["file"]
+        if dest.is_file() and sha256(dest.read_bytes()) == rom["romSha256"]:
+            print(f"{rom['name']}: already at {dest}")
+            continue
+        try:
+            if a.zip:
+                archive = a.zip.read_bytes()
+            else:
+                print(f"{rom['name']}: fetching {rom['url']}")
+                req = urllib.request.Request(rom["url"], headers={"User-Agent": "openql-fetch-roms"})
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    archive = r.read()
+            data = extract(rom, archive)
+        except Exception as e:  # a failed fetch or check leaves nothing behind
+            print(f"openql-fetch-roms: {e}", file=sys.stderr)
+            failed += 1
+            continue
+        tmp = dest.with_suffix(".part")
+        tmp.write_bytes(data)
+        tmp.replace(dest)
+        print(f"{rom['name']}: {dest} ({len(data)} bytes). Licence: {rom['licence']}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

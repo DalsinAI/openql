@@ -1,0 +1,29 @@
+{
+  "about": "The Firmware/ROMs OpenQL can fetch on request. None of them is in this repository or shipped with OpenQL: tools/openql-fetch-roms downloads each from its own project and checks it.",
+  "roms": [
+    {
+      "id": "minerva",
+      "machine": "ql",
+      "name": "Minerva 1.98j4",
+      "file": "minerva-1.98j4.rom",
+      "url": "https://raw.githubusercontent.com/SinclairQL/Minerva/7aa8f881b64710d73875ba2a27a1f03231e93e15/Min198j4.zip",
+      "sha256": "c14b09c2a03b02f59fadea5955e7bc47a92e42b95003072bc212bb6ccc272136",
+      "member": "Minerva_1.98j4.bin",
+      "romSha256": "8b2e057f930741bbe5c4ad146b97c284d10cfbe1b98b8489192c199c9efda608",
+      "romBytes": 49152,
+      "licence": "GPL-2.0, Laurence Reeves and the Minerva developers; https://github.com/SinclairQL/Minerva"
+    },
+    {
+      "id": "smsqe",
+      "machine": "superql",
+      "name": "SMSQ/E 3.43 (Q40/Q60 build)",
+      "file": "smsqe-3.43-q40.rom",
+      "url": "https://www.wlenerz.com/smsqe/343/smsqe343_binaries.zip",
+      "sha256": "89724ad08ca29c2d40e5f6b1a744b0a4e85efa5768e3d09fed35224acdbc3443",
+      "member": "Q40.rom",
+      "romSha256": "d0d286e869e2fcaa6f9088cf5ddc231bb7dce1ce45be8e91b719c9d54b316f36",
+      "romBytes": 283078,
+      "licence": "SMSQ/E licence, Tony Tebby, Wolfgang Lenerz and the SMSQ/E developers; https://www.wlenerz.com/smsqe/"
+    }
+  ]
+}
