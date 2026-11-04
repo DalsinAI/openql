@@ -293,6 +293,23 @@ typedef struct ac090 {
      * results in the registers, the return address popped, c->pc the
      * caller's next instruction); 0: nothing changed. NULL: never. */
     int (*call_hook)(struct ac090 *c, uint32_t pc);
+    /* Set by a board whose call_hook counts the calls it took there: a
+     * library call's stub on a task core then runs the call's native body
+     * straight from translated code (jit_magic_core_fast), the hook not
+     * asked, and counts it here (only this CPU's thread writes it). NULL:
+     * every call asks the hook. */
+    uint64_t *call_count;
+#define AC090_CALL_COUNT 1                 /* (for boards built against an ac090.h without it) */
+    /* The interpreter's run of plain instructions (ac090_run): set by
+     * anything that may change what the loop checks before each
+     * instruction (an exception, a device access, an interrupt raised), so
+     * the loop checks again. At the end: the hot fields keep their places. */
+    int recheck;
+    /* In such a run: the code page in host memory (NULL outside a run),
+     * where it starts (masked) and its wait, so that fetch16 takes an
+     * extension word without the checks the run has made. */
+    const uint8_t *run_page;
+    uint32_t run_base, run_w;
 } ac090;
 
 void ac090_init(ac090 *c, int model);
@@ -359,5 +376,8 @@ extern int ac090_atomic;
 void ac090_hostlock(uint32_t addr);
 void ac090_hostunlock(uint32_t addr);
 uint64_t ac090_atomic_ops(void);          /* TAS, CAS and CAS2 done the atomic way so far */
+
+/* instructions run by ac090_exec_inline, by opcode (the runtime's 5-second report) */
+extern uint32_t ac090_inline_ops[65536];
 
 #endif
