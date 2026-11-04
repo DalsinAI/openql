@@ -29,10 +29,36 @@ static int table_ready;
  * The figures come from the MC68020 User's Manual, cross-checked against
  * WinUAE's 68020/030 table (table68k, gencpu.cpp); no WinUAE code is used. */
 static uint8_t clk020[65536];
+/* Opcodes after which the interpreter's run of plain instructions
+ * (run_loop) checks the CPU's state again: those that may change SR's
+ * system byte, the MMU, the caches or STOP the CPU, and line A/F (the
+ * FPU, MMU and cache instructions, and the emulator's own traps).
+ * Exceptions, device accesses and interrupts set c->recheck instead. */
+static uint8_t op_recheck[65536];
+static int op_recheck_wants(uint32_t op) {
+    if (op >= 0xa000 && op < 0xb000) return 1;                  /* line A */
+    if (op >= 0xf000) return 1;                                  /* line F: FPU, MMU, CINV/CPUSH, MOVE16 */
+    if ((op & 0xffc0) == 0x46c0) return 1;                       /* MOVE to SR */
+    if (op == 0x007c || op == 0x027c || op == 0x0a7c) return 1;  /* ORI, ANDI, EORI to SR */
+    if ((op & 0xfff0) == 0x4e40) return 1;                       /* TRAP */
+    if (op >= 0x4e70 && op <= 0x4e77 && op != 0x4e71 && op != 0x4e75) return 1;   /* RESET, STOP, RTE, RTD, TRAPV, RTR */
+    if (op == 0x4e7a || op == 0x4e7b) return 1;                  /* MOVEC */
+    if ((op & 0xff00) == 0x0e00) return 1;                       /* MOVES */
+    if ((op & 0xffc0) == 0x06c0) return 1;                       /* CALLM, RTM */
+    if (op == 0x4afc || (op & 0xfff8) == 0x4848) return 1;       /* ILLEGAL, BKPT */
+    return 0;
+}
 
 /* ---- memory ------------------------------------------------------------ */
 
 static inline uint32_t mask(ac090 *c, uint32_t a) { return a & c->addr_mask; }
+/* The board's wait for the page at a, into the clock and the waits so far:
+ * nothing to add for a page without one (fast RAM), the common case. */
+/* Something that may change what the interpreter's run checks (run_loop):
+ * the run ends after this instruction, and its fetches go the general way
+ * from now on (the page table or the waits may have changed). */
+#define RECHECK(c) do { (c)->recheck = 1; (c)->run_page = NULL; } while (0)
+#define BUS_WAIT(c, a) do { uint32_t w_ = (c)->bus.wait[(a) >> 16]; if (w_) { (c)->clock += w_; (c)->bus_waited += w_; } } while (0)
 
 static void address_error(ac090 *c) {
     c->fault = 1;
@@ -62,22 +88,22 @@ static int probe_io_ok(ac090 *c, uint32_t a, int write) {
 static inline uint32_t prd8(ac090 *c, uint32_t addr) {
     uint32_t a = mask(c, addr);
     uint8_t *p = c->bus.rpage[a >> 16];
-    { uint32_t w_ = c->bus.wait[a >> 16]; c->clock += w_; c->bus_waited += w_; }
+    BUS_WAIT(c, a);
     if (p) return p[a & 0xffff];
     if (c->probe && !probe_io_ok(c, a, 0)) probe_abort(c);
-    return c->bus.read(c->bus.opaque, a, 1) & 0xff;
+    RECHECK(c); return c->bus.read(c->bus.opaque, a, 1) & 0xff;
 }
 
 static inline uint32_t prd16(ac090 *c, uint32_t addr) {
     uint32_t a = mask(c, addr);
     if ((a & 1) && c->model == AC090_68000) address_error(c);
     uint8_t *p = c->bus.rpage[a >> 16];
-    { uint32_t w_ = c->bus.wait[a >> 16]; c->clock += w_; c->bus_waited += w_; }
+    BUS_WAIT(c, a);
     if (p && (a & 0xffff) != 0xffff) {
         p += a & 0xffff;
         return (uint32_t)(p[0] << 8 | p[1]);
     }
-    if (!p) { if (c->probe && !probe_io_ok(c, a, 0)) probe_abort(c); return c->bus.read(c->bus.opaque, a, 2) & 0xffff; }
+    if (!p) { if (c->probe && !probe_io_ok(c, a, 0)) probe_abort(c); RECHECK(c); return c->bus.read(c->bus.opaque, a, 2) & 0xffff; }
     return (prd8(c, a) << 8) | prd8(c, a + 1);
 }
 
@@ -86,36 +112,36 @@ static inline uint32_t prd32(ac090 *c, uint32_t addr) {
     if ((a & 1) && c->model == AC090_68000) address_error(c);
     uint8_t *p = c->bus.rpage[a >> 16];
     if (p && (a & 0xffff) <= 0xfffc) {
-        { uint32_t w_ = c->bus.wait[a >> 16]; c->clock += w_; c->bus_waited += w_; }
+        BUS_WAIT(c, a);
         p += a & 0xffff;
         return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
     }
-    if (!p && (a & 0xffff) <= 0xfffc) { if (c->probe && !probe_io_ok(c, a, 0)) probe_abort(c); { uint32_t w_ = c->bus.wait[a >> 16]; c->clock += w_; c->bus_waited += w_; } return c->bus.read(c->bus.opaque, a, 4); }   /* I/O: the board sees the long */
+    if (!p && (a & 0xffff) <= 0xfffc) { if (c->probe && !probe_io_ok(c, a, 0)) probe_abort(c); BUS_WAIT(c, a); RECHECK(c); return c->bus.read(c->bus.opaque, a, 4); }   /* I/O: the board sees the long */
     return (prd16(c, a) << 16) | prd16(c, a + 2);
 }
 
 static inline void pwr8(ac090 *c, uint32_t addr, uint32_t v) {
     uint32_t a = mask(c, addr);
     uint8_t *p = c->bus.wpage[a >> 16];
-    { uint32_t w_ = c->bus.wait[a >> 16]; c->clock += w_; c->bus_waited += w_; }
+    BUS_WAIT(c, a);
     if (p) { if (c->wlog_on) wlog_bytes(c, a, p + (a & 0xffff), 1); p[a & 0xffff] = (uint8_t)v; return; }
     if (c->bus.rpage[a >> 16] && !c->bus.rom_writes) return; /* ROM */
     if (c->probe && !probe_io_ok(c, a, 1)) probe_abort(c);
-    c->bus.write(c->bus.opaque, a, v & 0xff, 1);
+    RECHECK(c); c->bus.write(c->bus.opaque, a, v & 0xff, 1);
 }
 
 static inline void pwr16(ac090 *c, uint32_t addr, uint32_t v) {
     uint32_t a = mask(c, addr);
     if ((a & 1) && c->model == AC090_68000) address_error(c);
     uint8_t *p = c->bus.wpage[a >> 16];
-    { uint32_t w_ = c->bus.wait[a >> 16]; c->clock += w_; c->bus_waited += w_; }
+    BUS_WAIT(c, a);
     if (p && (a & 0xffff) != 0xffff) {
         p += a & 0xffff;
         if (c->wlog_on) wlog_bytes(c, a, p, 2);
         p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v;
         return;
     }
-    if (!p && !c->bus.rpage[a >> 16]) { if (c->probe && !probe_io_ok(c, a, 1)) probe_abort(c); c->bus.write(c->bus.opaque, a, v & 0xffff, 2); return; }
+    if (!p && !c->bus.rpage[a >> 16]) { if (c->probe && !probe_io_ok(c, a, 1)) probe_abort(c); RECHECK(c); c->bus.write(c->bus.opaque, a, v & 0xffff, 2); return; }
     pwr8(c, a, v >> 8); pwr8(c, a + 1, v);
 }
 
@@ -124,14 +150,14 @@ static inline void pwr32(ac090 *c, uint32_t addr, uint32_t v) {
     if ((a & 1) && c->model == AC090_68000) address_error(c);
     uint8_t *p = c->bus.wpage[a >> 16];
     if (p && (a & 0xffff) <= 0xfffc) {
-        { uint32_t w_ = c->bus.wait[a >> 16]; c->clock += w_; c->bus_waited += w_; }
+        BUS_WAIT(c, a);
         p += a & 0xffff;
         if (c->wlog_on) wlog_bytes(c, a, p, 4);
         p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v;
         return;
     }
     if (!p && !c->bus.rpage[a >> 16] && (a & 0xffff) <= 0xfffc) { if (c->probe && !probe_io_ok(c, a, 1)) probe_abort(c); }
-    if (!p && !c->bus.rpage[a >> 16] && (a & 0xffff) <= 0xfffc) { { uint32_t w_ = c->bus.wait[a >> 16]; c->clock += w_; c->bus_waited += w_; } c->bus.write(c->bus.opaque, a, v, 4); return; }   /* I/O: the board sees the long */
+    if (!p && !c->bus.rpage[a >> 16] && (a & 0xffff) <= 0xfffc) { BUS_WAIT(c, a); RECHECK(c); c->bus.write(c->bus.opaque, a, v, 4); return; }   /* I/O: the board sees the long */
     pwr16(c, a, v >> 16); pwr16(c, a + 2, v);
 }
 
@@ -218,6 +244,17 @@ static uint32_t fetch_cached(ac090 *c, uint32_t pc) {
 
 static inline uint32_t fetch16(ac090 *c) {
     uint32_t v;
+    if (c->run_page) {                                    /* in a plain run (run_loop): no prefetch, cache model or MMU; its code page */
+        uint32_t off = (c->pc & c->addr_mask) - c->run_base;
+        if (__builtin_expect(off <= 0xfffe && !(off & 1), 1)) {
+            const uint8_t *p = c->run_page + off;
+            v = (uint32_t)p[0] << 8 | p[1];
+            c->clock += 3u + c->run_w;                    /* as below: the wait (prd16), then the bus cycle */
+            if (c->run_w) c->bus_waited += c->run_w;
+            c->pc += 2;
+            return v;
+        }
+    }
     if (__builtin_expect(c->pf_len != 0, 0)) {           /* after RESET: what the pipeline held */
         if (c->pc - c->pf_base < (uint32_t)c->pf_len * 2) { v = c->pf_word[(c->pc - c->pf_base) >> 1]; c->pc += 2; return v; }
         c->pf_len = 0;
@@ -325,6 +362,7 @@ static void trace_dump(ac090 *c, int vector) {
 #endif
 
 static void exception(ac090 *c, int vector, uint32_t pc) {
+    RECHECK(c);                          /* the interpreter's loop: SR and the hooks' doings */
     if (c->exc_hook && c->exc_hook(c, vector, pc)) return;   /* a task core: the instruction runs again on CPU0 */
     c->excepted = 1;
     if (c->fault_hook && ((vector >= 2 && vector <= 4) || vector == 10 || vector == 11)) c->fault_hook(c, vector, pc);
@@ -358,6 +396,7 @@ static void exception(ac090 *c, int vector, uint32_t pc) {
  * fields are filled: SR, PC, format/vector, SSW (read, word, program space
  * FC 6 or 2) and the fault address; the internal words are zero. */
 static void address_error_020(ac090 *c, uint32_t pc) {
+    RECHECK(c);
     if (c->guard_hook && c->guard_hook(c, V_ADDRESS, pc)) { c->excepted = 1; return; }   /* pc: the odd address */
     uint16_t old = ac090_get_sr(c);
     c->excepted = 1;
@@ -747,7 +786,7 @@ static uint8_t *atomic_host(ac090 *c, uint32_t a, int sz) {
     if ((a & 0xffff) + (uint32_t)sz > 0x10000) return NULL;
     uint8_t *p = c->bus.wpage[a >> 16];
     if (!p) return NULL;
-    { uint32_t w_ = c->bus.wait[a >> 16]; c->clock += w_; c->bus_waited += w_; }
+    BUS_WAIT(c, a);
     return p + (a & 0xffff);
 }
 static uint32_t be_get(const uint8_t *p, int sz) { return sz == 1 ? p[0] : sz == 2 ? (uint32_t)(p[0] << 8 | p[1]) : (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
@@ -1926,6 +1965,7 @@ static void build(handler *t, int model) {
         handler h = decode((uint16_t)op, model);
         t[op] = h ? h : illegal;
         if (model >= AC090_68020) { int k = cost020((uint16_t)op, t[op]); clk020[op] = (uint8_t)(k > 255 ? 255 : k); }
+        op_recheck[op] = (uint8_t)op_recheck_wants(op);
     }
     if (model == AC090_68000 && !clk020[0x4e71]) for (uint32_t op = 0; op < 65536; op++) clk020[op] = 4;
 }
@@ -1964,6 +2004,7 @@ void ac090_reset(ac090 *c) {
 
 void ac090_set_irq(ac090 *c, int level) {
     c->irq = level & 7;
+    RECHECK(c);
     if (c->irq && ((uint32_t)c->irq > c->ipl || c->irq == 7)) ac090_end_slice(c);   /* translated code leaves at the next block */
 }
 
@@ -2085,14 +2126,81 @@ void ac090_write(ac090 *c, uint32_t addr, uint32_t value, int size) {
     if (size == 1) pwr8(c, addr, value); else if (size == 2) pwr16(c, addr, value); else pwr32(c, addr, value);
 }
 
-uint64_t ac090_run(ac090 *c, uint64_t clocks) {
-    handler *volatile t = TABLE(c);
-    uint64_t start = c->instructions;
-    c->run_end = c->clock + clocks;
-    if (setjmp(c->abort)) {
-        if (c->fault) { c->halted = 1; return c->instructions - start; }
+/* One run of plain instructions (run_loop, below), paced and cached as
+ * constants so that each of the four kinds is its own loop: 1 when an
+ * opcode word is not in a page of memory (or at an odd address) and the
+ * way below must take it, 0 when the run is over. */
+static inline __attribute__((always_inline)) int plain_run(ac090 *c, handler *t, const int paced, const int cached) {
+    const uint32_t amask = c->addr_mask, pace = c->pace1024;
+    uint32_t pg = ~0u, w = 0;
+    const uint8_t *p = NULL;
+    for (;;) {
+        uint64_t paced_from = 0, waited_from = 0;
+        if (paced) { paced_from = c->clock; waited_from = c->bus_waited; }
+        uint32_t op;
+        if (!cached) {
+            uint32_t a = c->pc & amask;
+            if (__builtin_expect((a >> 16) != pg, 0)) {      /* (run_page goes NULL only where the run then ends) */
+                pg = a >> 16; p = c->bus.rpage[pg]; w = c->bus.wait[pg];
+                c->run_page = p; c->run_base = pg << 16; c->run_w = w;   /* fetch16's, for the extension words */
+            }
+            if (__builtin_expect(!p || (a & 1), 0)) return 1;
+            op = (uint32_t)p[a & 0xffff] << 8 | p[(a & 0xffff) + 1];
+            c->op_pc = c->pc;
+            c->pc += 2;
+            c->clock += 3u + w + clk020[op];
+            if (w) c->bus_waited += w;
+        } else {
+            c->op_pc = c->pc;
+            op = fetch_cached(c, c->pc);
+            c->pc += 2;
+            c->clock += clk020[op];
+        }
+        c->op = (uint16_t)op;
+        int last = op_recheck[op];
+        if (last) c->run_page = NULL;           /* it may change what the run assumes: its words the general way */
+        t[op](c);
+        if (paced) { uint64_t waits = c->bus_waited - waited_from, own = (c->clock - paced_from - waits) * pace + c->pace_rem; c->clock = paced_from + (own >> 10) + waits; c->pace_rem = (uint32_t)(own & 1023); }
+        c->instructions++;
+        if (c->clock >= c->run_end || c->halted || last || c->recheck) return 0;
     }
+}
+
+/* The loop proper, apart from ac090_run, which holds the setjmp: a
+ * function that calls setjmp keeps its locals in memory, so c and the
+ * table were reloaded from the stack all through the loop. A fault
+ * longjmps back to ac090_run, which calls this again. */
+static __attribute__((noinline)) void run_loop(ac090 *c, handler *t) {
     while (c->clock < c->run_end && !c->halted) {
+#ifndef AC090_TRACE
+        /* Nothing special (no interrupt to take, not stopped, no MMU or
+         * bus-error registers, no prefetch from RESET, no trace): a run of
+         * instructions, checking none of that again until an instruction
+         * may have changed it: one that op_recheck names (SR, MOVEC, STOP,
+         * RESET, line A/F...), or anything that sets c->recheck (an
+         * exception, a device access, an interrupt raised). Timing accurate
+         * (pace1024) and the 68020's I-cache model, which neither changes
+         * but through those, are fixed for the run:
+         *  - without the cache model, each opcode word comes from the code
+         *    page, kept with its wait through the run (the board changes
+         *    its page table and waits only between runs or in a device
+         *    access), with one clock update for its bus cycle, its wait and
+         *    its own clocks, the sum the way below makes one by one; the
+         *    extension words come the same way (fetch16, run_page). An
+         *    opcode word outside a page of memory, or at an odd address,
+         *    goes the way below;
+         *  - with it, every word goes through fetch_cached, as below;
+         *  - paced, each instruction's own cycles are scaled exactly as
+         *    below, its bus waits not. */
+        if (!(((c->irq > (int)c->ipl) | (c->irq == 7)) | c->stopped | c->mmu_on | c->berr_regs | c->pf_len | c->t1 | c->t0)) {
+            c->recheck = 0;
+            const int paced = c->pace1024 != 0, cached = (c->cacr & 1) && !c->jit_on;
+            int general = cached ? (paced ? plain_run(c, t, 1, 1) : plain_run(c, t, 0, 1))
+                                 : (paced ? plain_run(c, t, 1, 0) : plain_run(c, t, 0, 0));
+            c->run_page = NULL;
+            if (!general) continue;
+        }
+#endif
         if (c->irq) take_irq(c);
         if (c->stopped) { c->clock = c->run_end; break; }
         if (c->mmu_on | c->berr_regs) { memcpy(c->mmu_regs, c->d, sizeof c->mmu_regs); c->mmu_regs_valid = 1; }   /* an access fault restarts the instruction */
@@ -2122,5 +2230,15 @@ uint64_t ac090_run(ac090 *c, uint64_t clocks) {
         if (c->pace1024) { uint64_t waits = c->bus_waited - waited_from, own = (c->clock - paced_from - waits) * c->pace1024 + c->pace_rem; c->clock = paced_from + (own >> 10) + waits; c->pace_rem = (uint32_t)(own & 1023); }
         c->instructions++;
     }
+}
+
+uint64_t ac090_run(ac090 *c, uint64_t clocks) {
+    uint64_t start = c->instructions;
+    c->run_end = c->clock + clocks;
+    if (setjmp(c->abort)) {
+        c->run_page = NULL;                  /* a fault out of a run */
+        if (c->fault) { c->halted = 1; return c->instructions - start; }
+    }
+    run_loop(c, TABLE(c));
     return c->instructions - start;
 }
