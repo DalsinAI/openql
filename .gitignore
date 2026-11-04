@@ -2,6 +2,7 @@
 /qlrun
 /tests/ql_test
 /tests/superql_test
+/tests/fdc_test
 __pycache__/
 *.ppm
 *.rom

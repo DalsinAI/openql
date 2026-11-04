@@ -34,6 +34,7 @@
 #define localtime_r(t, tm) localtime_s(tm, t)   /* Windows has the same with its arguments the other way round */
 #endif
 #include "../cpu/ac090.h"
+#include "fdc.h"
 
 #define SQL_CLOCK_HZ      40000000u              /* the Q40's 68040 at 40 MHz */
 #define SQL_FRAME_CLOCKS  (SQL_CLOCK_HZ / 50)    /* the master chip's 50 Hz interrupt */
@@ -55,6 +56,7 @@ enum { SQL_IR_KBD = 1 << 1, SQL_IR_SER = 1 << 2, SQL_IR_FRAME = 1 << 3, SQL_IR_E
 enum { SQL_D_QL8 = 0, SQL_D_QL4 = 1, SQL_D_SMALL = 2, SQL_D_LARGE = 3 };
 
 #define SQL_RXQ           64
+#define SQL_AUDIOQ        8192                   /* stereo samples the host has not taken yet */
 
 typedef struct sql_uart {             /* a 16550, as far as SMSQ/E's serial driver looks */
     uint8_t ier, lcr, mcr, scr, dll, dlm, fcr;
@@ -95,6 +97,14 @@ typedef struct superql {
     sql_uart com[4];
     uint8_t lpt_data, lpt_ctl;
     sql_ide ide;
+    sql_fdc fdc;                      /* FLP1_ and FLP2_ */
+    /* sound: two 8-bit DACs, fed by SMSQ/E at each sample interrupt (level 6,
+     * 20 or 40 kHz, on while the sample enable is set) */
+    uint8_t dac[2];
+    int sample_pending;
+    uint64_t next_sample;
+    int16_t audioq[SQL_AUDIOQ][2];
+    int aq_head, aq_tail;
     /* the mouse: a Microsoft serial mouse on a COM port (SMSQ/E's driver finds it
      * by the 'M' it sends when DTR and RTS come on), -1 for none */
     int mouse_port;
@@ -110,6 +120,16 @@ int sql_attach_disk(superql *s, const char *path, int read_only);   /* WIN1: an 
 void sql_free(superql *s);
 void sql_reset(superql *s, int clear_ram);
 uint64_t sql_run(superql *s, uint64_t until);
+
+/* The floppy drives (0 FLP1_, 1 FLP2_): a raw image of a QL floppy, 80
+ * tracks, two sides, 9, 18 or 36 sectors of 512 a track. */
+int sql_insert_floppy(superql *s, int drive, const char *path, int read_only);
+void sql_eject_floppy(superql *s, int drive);
+
+/* Sound: the DACs' output at the sample rate (sql_audio_rate: 20000 or
+ * 40000 a second), stereo, as signed 16-bit. Returns the samples taken. */
+unsigned sql_audio_rate(const superql *s);
+int sql_audio_read(superql *s, int16_t *out, int max);
 
 /* The keyboard: PC set 2 scan codes, as the Q40's keyboard port gives them
  * (SMSQ/E's ibm_at102cvt reads them). sql_key_raw puts one byte in. */

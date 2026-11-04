@@ -37,7 +37,8 @@ static void update_irq(superql *s) {
     if (s->eir & s->eie) s->ir |= SQL_IR_EINT; else s->ir &= (uint8_t)~SQL_IR_EINT;
     int on = ((s->ir & SQL_IR_KBD) && s->kie) || ((s->ir & SQL_IR_SER) && s->sie) ||
              (s->ir & SQL_IR_FRAME) || (s->ir & SQL_IR_EINT);
-    ac090_set_irq(&s->cpu, on ? 2 : 0);    /* the Q40 raises level 2 for all of them */
+    /* the Q40 raises level 2 for all of them, and level 6 for the sample interrupt */
+    ac090_set_irq(&s->cpu, s->uie && s->sample_pending ? 6 : on ? 2 : 0);
 }
 
 /* ---- the low ROM switch ------------------------------------------------ */
@@ -225,7 +226,8 @@ static uint8_t isa_read8(superql *s, unsigned port) {
     case 0x378: return s->lpt_data;
     case 0x379: return 0xdf;                          /* not busy, selected, no error, paper in */
     case 0x37a: return s->lpt_ctl;
-    case 0x3f4: return 0x80;                          /* the floppy controller is idle; no drives are fitted */
+    case 0x3f0: case 0x3f1: case 0x3f2: case 0x3f3: case 0x3f4: case 0x3f5: case 0x3f7:
+        return fdc_read(&s->fdc, port);
     case 0x1f1: return s->ide.err;
     case 0x1f2: return s->ide.scnt;
     case 0x1f3: return s->ide.sect;
@@ -275,6 +277,7 @@ static void isa_write8(superql *s, unsigned port, uint8_t v) {
         if ((v & 1) && !(s->lpt_ctl & 1) && s->par_out) s->par_out(s->opaque, s->lpt_data);
         s->lpt_ctl = v;
         break;
+    case 0x3f2: case 0x3f4: case 0x3f5: case 0x3f7: fdc_write(&s->fdc, port, v); break;
     case 0x1f1: break;
     case 0x1f2: d->scnt = v; break;
     case 0x1f3: d->sect = v; break;
@@ -303,17 +306,22 @@ static uint8_t master_read8(superql *s, uint32_t off) {
 }
 
 static void master_write8(superql *s, uint32_t off, uint8_t v) {
-    if (off >= 0x8000) return;                        /* the DACs: no sound out yet */
+    if (off >= 0x8000) { if (off < 0x8008) s->dac[off >= 0x8004] = v; return; }   /* DAC left $FF008000, right $FF008004 */
     switch (off >> 2) {
     case 0x02: s->kie = v & 1; break;
     case 0x03: s->sie = v & 1; break;
     case 0x04: s->eie = v; break;
-    case 0x05: s->uie = v & 1; break;
+    case 0x05:                                        /* the sample interrupt's enable */
+        if ((v & 1) && !s->uie) s->next_sample = s->cpu.clock + SQL_CLOCK_HZ / sql_audio_rate(s);
+        s->uie = v & 1;
+        if (!s->uie) s->sample_pending = 0;
+        break;
     case 0x06: s->dmode = v & 3; break;
     case 0x08:                                        /* key acknowledge: the next code */
         if (s->kq_head != s->kq_tail) s->kq_head = (s->kq_head + 1) % SQL_KEYQ;
         break;
     case 0x09: s->ir &= (uint8_t)~SQL_IR_FRAME; break;
+    case 0x0a: s->sample_pending = 0; break;          /* the sample interrupt's acknowledge */
     case 0x0b: s->srate = v & 1; break;
     case 0x0c: s->led = v; break;
     default: break;                                   /* 50 us acknowledge, extension bus reset */
@@ -419,6 +427,11 @@ void sql_reset(superql *s, int clear_ram) {
     memset(s->com, 0, sizeof s->com);
     s->mouse_dx = s->mouse_dy = 0;
     s->lpt_ctl = 0;
+    s->sample_pending = 0;
+    s->dac[0] = s->dac[1] = 0x80;
+    s->aq_head = s->aq_tail = 0;
+    s->fdc.dor = 0;                                   /* the floppy controller held in reset until the driver lets it go */
+    fdc_reset(&s->fdc);
     set_low(s, 1);                                    /* the reset vectors come from the ROM */
     ac090_set_irq(&s->cpu, 0);
     ac090_reset(&s->cpu);
@@ -427,6 +440,7 @@ void sql_reset(superql *s, int clear_ram) {
 
 void sql_free(superql *s) {
     if (s->ide.f) fclose(s->ide.f);
+    for (int i = 0; i < FDC_DRIVES; i++) fdc_eject(&s->fdc, i);
     free(s->ram); free(s->rom); free(s->vram);
     s->ram = s->rom = s->vram = NULL;
     s->ide.f = NULL;
@@ -475,8 +489,19 @@ uint64_t sql_run(superql *s, uint64_t until) {
     uint64_t start = c->instructions;
     while (c->clock < until && !c->halted) {
         uint64_t next = s->next_frame < until ? s->next_frame : until;
+        if (s->uie && s->next_sample < next) next = s->next_sample;
         update_irq(s);
         if (next > c->clock) ac090_run(c, next - c->clock);
+        while (s->uie && c->clock >= s->next_sample) {   /* a sample: the DACs as they are now, then the interrupt */
+            s->next_sample += SQL_CLOCK_HZ / sql_audio_rate(s);
+            int t = (s->aq_tail + 1) % SQL_AUDIOQ;
+            if (t != s->aq_head) {
+                s->audioq[s->aq_tail][0] = (int16_t)((s->dac[0] - 128) << 8);
+                s->audioq[s->aq_tail][1] = (int16_t)((s->dac[1] - 128) << 8);
+                s->aq_tail = t;
+            }
+            s->sample_pending = 1;
+        }
         while (c->clock >= s->next_frame) {
             s->next_frame += SQL_FRAME_CLOCKS;
             s->frames++;
@@ -486,6 +511,24 @@ uint64_t sql_run(superql *s, uint64_t until) {
     }
     update_irq(s);
     return c->instructions - start;
+}
+
+/* ---- floppies and sound --------------------------------------------------- */
+
+int sql_insert_floppy(superql *s, int drive, const char *path, int read_only) { return fdc_insert(&s->fdc, drive, path, read_only); }
+void sql_eject_floppy(superql *s, int drive) { fdc_eject(&s->fdc, drive); }
+
+unsigned sql_audio_rate(const superql *s) { return s->srate ? 40000u : 20000u; }
+
+int sql_audio_read(superql *s, int16_t *out, int max) {
+    int n = 0;
+    while (n < max && s->aq_head != s->aq_tail) {
+        out[2 * n] = s->audioq[s->aq_head][0];
+        out[2 * n + 1] = s->audioq[s->aq_head][1];
+        s->aq_head = (s->aq_head + 1) % SQL_AUDIOQ;
+        n++;
+    }
+    return n;
 }
 
 /* ---- the keyboard ------------------------------------------------------ */
