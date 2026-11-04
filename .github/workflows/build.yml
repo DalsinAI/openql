@@ -1,0 +1,31 @@
+name: Build OpenQL
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDL2
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsdl2-dev
+      - name: Build
+        run: make openql qlrun
+      - name: The boards' cases and the fetcher's
+        run: make test
+      - name: Minerva boots to its F1/F2 screen, and SuperBASIC answers
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          tools/openql-fetch-roms minerva
+          ./openql -M ql -H 10 -o "$RUNNER_TEMP/f1f2.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/f1f2.ppm" ff0000 1000
+          ./qlrun -s 12 -m 640 -p "$RUNNER_TEMP/sb" -i key:f1@3 -i 'type:PRINT 6*7\n@6' "$OPENQL_ROMS/minerva-1.98j4.rom" > /dev/null
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/sb-011.ppm" ff0000 40000
