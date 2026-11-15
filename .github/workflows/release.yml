@@ -106,4 +106,10 @@ jobs:
           TAG: ${{ inputs.version || github.ref_name }}
         run: |
           cd dist && sha256sum * > SHA256SUMS && cd ..
-          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "OpenQL ${TAG#v}" --notes-file RELEASE-NOTES.md
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # The tag was pushed again (a history rewrite moves it): the release gets this commit's builds.
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --notes-file RELEASE-NOTES.md
+          else
+            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "OpenQL ${TAG#v}" --notes-file RELEASE-NOTES.md
+          fi

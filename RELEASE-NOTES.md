@@ -13,3 +13,10 @@ No ROM is included. Fetch them on request with `openql-fetch-roms minerva` and `
 | `openql-macos-x86_64.tar.gz` | macOS on Intel, and Apple silicon through Rosetta (SDL2 included; the first time, right-click and Open) |
 
 Not yet: the QL's microdrives, the network, serial input, the floppy controller's interrupt.
+
+New since v0.1.0:
+
+- AC090's interpreter runs plain instructions without its per-step checks: the same frames, faster.
+- `openql -H` takes `-i key:NAME@T` and `-i type:TEXT@T`, so both machines can be driven without a window. CI now boots SMSQ/E and checks that SuperBASIC answers, as it does for Minerva.
+- `-m` says when it is outside the machine's range, and refuses a value that is not a number.
+- Fixes: a negative shift in the Super QL's sound (undefined in C); the picture buffer is freed on exit.
