@@ -37,6 +37,7 @@ They go to `~/.local/share/openql/roms` (`%APPDATA%\openql\roms` on Windows, or 
 ```sh
 ./openql                            # the Super QL with SMSQ/E
 ./openql -w QXL.WIN                 # ... with a QL hard disk as WIN1 (-R: read only)
+./openql -w QLE.WIN                 # ... with QL/E, a QL hard disk full of software (sinclairql.net)
 ./openql -f games.img               # ... with a QL floppy image in FLP1_ (a second -f: FLP2_)
 ./openql -M ql                      # a QL with Minerva: F1 or F2, then SuperBASIC
 ./openql -M ql -m 128               # a stock 128 KB QL

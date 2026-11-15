@@ -102,9 +102,33 @@ static uint32_t ide_lba(const sql_ide *d) {
     return (cyl * d->heads + (d->head & 15)) * d->spt + (d->sect ? d->sect - 1u : 0);
 }
 
+/* A QXL.WIN made by QPC or Q-emuLator has no geometry in its QLWA header
+ * (sectors per track and heads at $24 and $26 are 0). SMSQ/E's Q40 driver
+ * takes its CHS geometry from there (dv3/qlf/check40), and with none it puts
+ * the bare sector number in the registers, which loses bits 12-15: past the
+ * disk's first 2 MB it reads the wrong sectors. So sector 0 shows the drive's
+ * own geometry, as a disk prepared on a Q40 has, and the file keeps its zeros. */
+static void ide_geometry(sql_ide *d, int show) {
+    if (d->lba != 0 || memcmp(d->buf, "QLWA", 4)) return;
+    if (show) {
+        unsigned spt = (unsigned)d->buf[0x24] << 8 | d->buf[0x25], heads = (unsigned)d->buf[0x26] << 8 | d->buf[0x27];
+        d->geometry = !spt && !heads;
+        if (!d->geometry) {                        /* a disk from a Q40: the drive takes the geometry it was made with */
+            if (spt && spt < 256 && heads && heads <= 16) { d->spt = (uint16_t)spt; d->heads = (uint16_t)heads; }
+            return;
+        }
+        d->buf[0x24] = (uint8_t)(d->spt >> 8); d->buf[0x25] = (uint8_t)d->spt;
+        d->buf[0x26] = (uint8_t)(d->heads >> 8); d->buf[0x27] = (uint8_t)d->heads;
+        d->buf[0x28] = (uint8_t)(d->cyls >> 8); d->buf[0x29] = (uint8_t)d->cyls;
+    } else if (d->geometry) {
+        memset(d->buf + 0x24, 0, 6);
+    }
+}
+
 static int ide_load(sql_ide *d) {
     if (d->lba >= d->sectors || disk_seek(d->f, (int64_t)d->lba * SQL_SECTOR) ||
         fread(d->buf, 1, SQL_SECTOR, d->f) != SQL_SECTOR) { d->err = 0x10; ide_status(d, 0x51); return -1; }
+    ide_geometry(d, 1);
     d->pos = 0;
     ide_status(d, 0x58);                           /* ready, seek done, data request */
     return 0;
@@ -176,6 +200,7 @@ static void ide_data_write(sql_ide *d, uint16_t v) {
     ide_put_word(d->buf, d->pos, v);
     d->pos += 2;
     if (d->pos < SQL_SECTOR) return;
+    ide_geometry(d, 0);
     if (d->lba >= d->sectors || disk_seek(d->f, (int64_t)d->lba * SQL_SECTOR) ||
         fwrite(d->buf, 1, SQL_SECTOR, d->f) != SQL_SECTOR) { d->err = 0x10; ide_status(d, 0x51); return; }
     fflush(d->f);
