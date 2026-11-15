@@ -26,7 +26,7 @@ HERE = Path(__file__).resolve().parent
 
 
 def catalogue() -> dict:
-    for p in (HERE.parent / "roms.json", HERE.parent / "share/openql/roms.json"):
+    for p in (HERE.parent / "roms.json", HERE / "roms.json", HERE.parent / "share/openql/roms.json"):
         if p.is_file():
             return json.loads(p.read_text())
     sys.exit("openql-fetch-roms: no roms.json beside the tool")

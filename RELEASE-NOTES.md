@@ -16,6 +16,10 @@ Not yet: the QL's own network (QLAN) wire.
 
 New since v0.1.0:
 
+- **A launcher**: `openql` on its own opens a screen to choose the machine, memory, disks, picture, speed and sound, and to **Get QL/E** (downloaded from sinclairql.net and put in WIN1_ with the settings it wants) or fetch the ROMs. It remembers the choices.
+- **A menu on F12**: swap floppies and cartridges (or make a blank one), saved states in four slots, type the clipboard in (also Ctrl+Shift+V), speed (2x, 4x, as fast as it goes; Ctrl+F8), the picture's scaling (4:3, whole pixels, fill), full screen, reset, back to the launcher.
+- **Saved states** on both machines, also from the command line: `-l FILE` starts from one, `-O FILE` saves one after `-H`.
+
 - **Serial input** on both machines: `-S FILE` sends a file in on ser1 (COM1), and `-s tcp:PORT` or `-s tcp:HOST:PORT` makes ser1 a null-modem cable over TCP, both ways, between two openqls or to a terminal program.
 - **The Super QL's external interrupt register** shows the multi-I/O card's IRQ lines: the floppy controller (IRQ 6), the IDE disk (IRQ 14) and the serial ports (IRQ 3 and 4).
 - Floppy: a seek's status is no longer mixed up with the reset's polling statuses, so SMSQ/E's FORMAT gets through its tracks.

@@ -39,6 +39,16 @@ jobs:
           test "$(wc -c < "$m")" -eq 174930
           ./openql -M ql -d "$m" -H 40 -i key:f1@3 -i 'type:LOAD mdv1_HELLO\n@8' -i 'type:RUN\n@30' -o "$RUNNER_TEMP/mdv.ppm"
           python3 -I tests/boot_check.py "$RUNNER_TEMP/mdv.ppm" ffffff 20 258,1,290,12   # the 42, in #1
+      - name: A saved state runs on as the machine would have
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          ./openql -M ql -H 6 -i key:f1@3 -O "$RUNNER_TEMP/ql.state"
+          ./openql -M ql -l "$RUNNER_TEMP/ql.state" -H 4 -i 'type:PRINT 6*7\n@1' -o "$RUNNER_TEMP/state.ppm"
+          ./openql -M ql -H 10 -i key:f1@3 -i 'type:PRINT 6*7\n@7' -o "$RUNNER_TEMP/straight.ppm"
+          cmp "$RUNNER_TEMP/state.ppm" "$RUNNER_TEMP/straight.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/state.ppm" ffffff 20 258,1,290,12   # the 42, in #1
+          ! ./openql -M ql -m 128 -l "$RUNNER_TEMP/ql.state" -H 1 2> "$RUNNER_TEMP/err.txt"
+          grep -q "another RAM size" "$RUNNER_TEMP/err.txt"
       - name: SMSQ/E boots on the Super QL, and SuperBASIC answers
         run: |
           export OPENQL_ROMS="$RUNNER_TEMP/roms"

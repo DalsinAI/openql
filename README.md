@@ -34,8 +34,13 @@ They go to `~/.local/share/openql/roms` (`%APPDATA%\openql\roms` on Windows, or 
 
 ## Run
 
+Started with nothing on its command line, `openql` opens its launcher: choose the machine, its memory, its disks, the picture and the speed, then Start. **Get QL/E** downloads QL/E (QLE.WIN, a QL hard disk full of software, from sinclairql.net; it needs Python 3, like the ROM fetcher), puts it in the Super QL's WIN1_ and sets the machine up for it; **Fetch the ROMs** gets Minerva and SMSQ/E. The launcher keeps its choices in `openql.cfg` beside the ROMs folder, and can be told not to show at start (`-L` shows it anyway).
+
+With options, openql starts that machine straight away:
+
 ```sh
-./openql                            # the Super QL with SMSQ/E
+./openql -L                         # the launcher, whatever the settings say
+./openql -M superql                 # the Super QL with SMSQ/E
 ./openql -w QXL.WIN                 # ... with a QL hard disk as WIN1 (-R: read only)
 ./openql -w QLE.WIN                 # ... with QL/E, a QL hard disk full of software (sinclairql.net)
 ./openql -f games.img               # ... with a QL floppy image in FLP1_ (a second -f: FLP2_)
@@ -58,10 +63,13 @@ They go to `~/.local/share/openql/roms` (`%APPDATA%\openql\roms` on Windows, or 
 | `-S FILE` | ser1's input: the file's bytes come in once, when a program opens ser1 |
 | `-p FILE` | The Super QL's LPT1 output |
 | `-F`, `-q` | Full screen; no sound |
-| `-H SECONDS`, `-o FILE.ppm` | No window: run that long as fast as the host goes, then save the screen (tests) |
+| `-l FILE` | Start from a saved state |
+| `-H SECONDS`, `-o FILE.ppm`, `-O FILE` | No window: run that long as fast as the host goes, then save the screen (tests), or the machine's state |
 | `-i key:NAME@T`, `-i type:TEXT@T` | With `-H`, press a key (`f1` to `f10`, `enter`, `esc`, `space`, `tab`, the arrows) or type text (`\n` for ENTER) at T seconds, on either machine |
 
-In the window: **F11** full screen, **Ctrl+F12** the reset button, **Ctrl+Shift+F12** a power cycle, **Ctrl+F10** pause, **Ctrl+F9** takes the disk out of FLP1_ or the cartridge out of mdv1_ (with Shift, FLP2_ or mdv2_). Drop a floppy or microdrive image on the window to put it in FLP1_ or mdv1_ (hold Shift for the second drive). The QL has no Backspace or Delete, so those keys send CTRL with left or right, as QL typists did. F6 to F10 are SHIFT with F1 to F5. On the Super QL the host's pointer over the window moves SMSQ/E's pointer.
+In the window, **F12** opens openql's menu: put a disk or cartridge in or take it out (or a new blank cartridge on the QL), save the machine's state in one of four slots and load it again, type the host's clipboard in, change the speed (real time, 2x, 4x, or as fast as it goes) and the picture (4:3 at the window's size, 4:3 in whole pixels, or filling the window), go full screen, reset, or go back to the launcher. A saved state is the machine with its memory, for the same openql, ROM and memory size; the disks in the drives are not part of it.
+
+Also: **F11** full screen, **Ctrl+Shift+V** types the clipboard in, **Ctrl+F8** as fast as it goes (again: back), **Ctrl+F12** the reset button, **Ctrl+Shift+F12** a power cycle, **Ctrl+F10** pause, **Ctrl+F9** takes the disk out of FLP1_ or the cartridge out of mdv1_ (with Shift, FLP2_ or mdv2_). Drop a floppy or microdrive image on the window to put it in FLP1_ or mdv1_ (hold Shift for the second drive). The QL has no Backspace or Delete, so those keys send CTRL with left or right, as QL typists did. F6 to F10 are SHIFT with F1 to F5. On the Super QL the host's pointer over the window moves SMSQ/E's pointer.
 
 ## What is not done yet
 
