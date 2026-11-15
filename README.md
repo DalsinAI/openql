@@ -53,6 +53,7 @@ They go to `~/.local/share/openql/roms` (`%APPDATA%\openql\roms` on Windows, or 
 | `-s FILE`, `-p FILE` | ser1 (COM1) and the Super QL's LPT1 output |
 | `-F`, `-q` | Full screen; no sound |
 | `-H SECONDS`, `-o FILE.ppm` | No window: run that long as fast as the host goes, then save the screen (tests) |
+| `-i key:NAME@T`, `-i type:TEXT@T` | With `-H`, press a key (`f1` to `f10`, `enter`, `esc`, `space`, `tab`, the arrows) or type text (`\n` for ENTER) at T seconds, on either machine |
 
 In the window: **F11** full screen, **Ctrl+F12** the reset button, **Ctrl+Shift+F12** a power cycle, **Ctrl+F10** pause, **Ctrl+F9** takes the disk out of FLP1_ (with Shift, FLP2_). Drop a floppy image on the window to put it in FLP1_ (hold Shift for FLP2_). The QL has no Backspace or Delete, so those keys send CTRL with left or right, as QL typists did. F6 to F10 are SHIFT with F1 to F5. On the Super QL the host's pointer over the window moves SMSQ/E's pointer.
 

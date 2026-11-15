@@ -36,4 +36,7 @@ Not yet: the floppy controller's interrupt, serial input from the host, the netw
 
 ```sh
 make test
+# SMSQ/E boots and SuperBASIC answers, with no window (as CI checks it):
+./openql -H 12 -i 'type:PRINT 6*7\n@8' -o sb.ppm
+python3 -I tests/boot_check.py sb.ppm ffffff 60 516,2,600,24   # the 42 at the top of #1
 ```

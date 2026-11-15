@@ -5,6 +5,8 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -29,3 +31,11 @@ jobs:
           python3 -I tests/boot_check.py "$RUNNER_TEMP/f1f2.ppm" ff0000 1000
           ./qlrun -s 12 -m 640 -p "$RUNNER_TEMP/sb" -i key:f1@3 -i 'type:PRINT 6*7\n@6' "$OPENQL_ROMS/minerva-1.98j4.rom" > /dev/null
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sb-011.ppm" ff0000 40000
+      - name: SMSQ/E boots on the Super QL, and SuperBASIC answers
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          tools/openql-fetch-roms smsqe
+          ./openql -H 12 -i 'type:PRINT 6*7\n@8' -o "$RUNNER_TEMP/sql.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ff0000 100000              # its windows
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" 00ff00 200 0,408,1024,512  # the line typed, in #0
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ffffff 60 516,2,600,24     # the 42, in #1

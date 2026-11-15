@@ -12,10 +12,10 @@ A PAL Sinclair QL for the C AC090 core on its 68000 model: the 68008 at 7.5 MHz,
 | 68008 | AC090's 68000 model through the interpreter, 7.5 MHz. Each bus access costs 4 more clocks (the 8-bit bus), 8 on the screen's 64 KB |
 | ZX8301 | Mode 4 (512x256, black, red, green, white) and mode 8 (256x256, eight colours, flash), scr0 at $20000 or scr1 at $28000, blanking (`mc_stat`, $18063) |
 | ZX8302 | The clock (seconds from 1961, from the host's clock, reset and stepped as on the QL), the frame interrupt at 50 Hz on level 2, interrupt masks and clears, ser1 output at the programmed baud rate with its transmit interrupt |
-| IPC | The two-wire link as QDOS drives it: status, read keyboard (up to 7 keys with SHIFT/CTRL/ALT), KEYROW, sound (accepted, not played), random, test |
+| IPC | The two-wire link as QDOS drives it: status, read keyboard (up to 7 keys with SHIFT/CTRL/ALT), KEYROW, sound (BEEP's pitch and duration; the window plays it as a square wave at the first pitch, without the sweeps, wrap or fuzz), random, test |
 | Microdrives | Empty drives: a selected drive's motor runs, the gap stays on and a gap interrupt comes each 40 ms, so QDOS says "not found" and stops it |
 
-Not yet: microdrive cartridges, floppies or a hard disk, the network, ser1 and ser2 input, sound, and a faster CPU (Gold Card style). AC090's JIT is not used: it runs only as a 68020 and 68040, and a 68008's pace needs none.
+Not yet: microdrive cartridges, floppies or a hard disk, the network, ser1 and ser2 input, BEEP's sweeps and fuzz, and a faster CPU (Gold Card style). AC090's JIT is not used: it runs only as a 68020 and 68040, and a 68008's pace needs none.
 
 ## Files
 
@@ -24,7 +24,7 @@ Not yet: microdrive cartridges, floppies or a hard disk, the network, ser1 and s
 | `ql.h`, `ql.c` | The board |
 | `qlrun.c` | Boots a ROM headless, saves the screen each second as PPM, types keys (`-i key:f1@3 -i 'type:PRINT 1\n@6'`) |
 | `ql_test.c` | The board's cases without a ROM (`make test`) |
-| `../openql.c` | The window: the host's keys on the QL's keyboard (Backspace and Del are CTRL with an arrow, F6-F10 are SHIFT with F1-F5) |
+| `../openql.c` | The window: the host's keys on the QL's keyboard (Backspace and Del are CTRL with an arrow, F6-F10 are SHIFT with F1-F5), and BEEP |
 
 ```sh
 make qlrun

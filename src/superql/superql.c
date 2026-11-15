@@ -496,8 +496,8 @@ uint64_t sql_run(superql *s, uint64_t until) {
             s->next_sample += SQL_CLOCK_HZ / sql_audio_rate(s);
             int t = (s->aq_tail + 1) % SQL_AUDIOQ;
             if (t != s->aq_head) {
-                s->audioq[s->aq_tail][0] = (int16_t)((s->dac[0] - 128) << 8);
-                s->audioq[s->aq_tail][1] = (int16_t)((s->dac[1] - 128) << 8);
+                s->audioq[s->aq_tail][0] = (int16_t)((s->dac[0] - 128) * 256);
+                s->audioq[s->aq_tail][1] = (int16_t)((s->dac[1] - 128) * 256);
                 s->aq_tail = t;
             }
             s->sample_pending = 1;
