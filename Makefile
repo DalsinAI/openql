@@ -5,7 +5,9 @@
 
 CC      ?= cc
 CFLAGS  ?= -O2 -g
-CFLAGS  += -std=gnu11 -Wall -Wno-unused-function -D_FILE_OFFSET_BITS=64 -Isrc
+# -ffp-contract=off: the FPU's double-double code (src/cpu/fpu_soft.c) needs
+# every double operation rounded as written, never fused into one.
+CFLAGS  += -std=gnu11 -Wall -Wno-unused-function -ffp-contract=off -D_FILE_OFFSET_BITS=64 -Isrc
 LDLIBS  ?=
 SDL_CFLAGS := $(shell pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags)
 SDL_LIBS   := $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs)
@@ -13,7 +15,8 @@ PREFIX  ?= /usr/local
 WINDRES ?= windres
 
 CPU     = src/cpu/ac090.c
-CPU_DEP = $(CPU) src/cpu/ac090.h src/cpu/ac090_mmu.c src/cpu/ac090_fpu.c src/cpu/fpu_special.h
+CPU_DEP = $(CPU) src/cpu/ac090.h src/cpu/ac090_mmu.c src/cpu/ac090_fpu.c src/cpu/fpu_special.h \
+          src/cpu/fpu_soft.c src/cpu/fpu_soft_tables.h src/cpu/fpu_decimal.c
 QL      = src/ql/ql.c src/ql/mdv.c
 SQL     = src/superql/superql.c src/superql/fdc.c
 HOST    = src/hostser.c src/hostdir.c src/settings.c
@@ -63,12 +66,22 @@ tests/hostdir_test: tests/hostdir_test.c src/hostdir.c src/hostdir.h
 tests/fdc_test: tests/fdc_test.c src/superql/fdc.c src/superql/fdc.h
 	$(CC) $(CFLAGS) tests/fdc_test.c src/superql/fdc.c -o $@
 
-test: tests/ql_test tests/superql_test tests/fdc_test tests/settings_test tests/hostdir_test
+# The FPU's results, bit for bit: the host's own FPU (the x87 on x86 Linux,
+# the integer one elsewhere), and the integer one built for this host too.
+tests/fpu_test: tests/fpu_test.c $(CPU_DEP)
+	$(CC) $(CFLAGS) tests/fpu_test.c $(CPU) -lm -o $@
+
+tests/fpu_soft_test: tests/fpu_test.c $(CPU_DEP)
+	$(CC) $(CFLAGS) -DAC090_FPU_SOFT=1 tests/fpu_test.c $(CPU) -lm -o $@
+
+test: tests/ql_test tests/superql_test tests/fdc_test tests/settings_test tests/hostdir_test tests/fpu_test tests/fpu_soft_test
 	./tests/ql_test
 	./tests/superql_test
 	./tests/fdc_test
 	./tests/settings_test
 	cd tests && ./hostdir_test
+	./tests/fpu_test
+	./tests/fpu_soft_test
 	python3 -I tests/test_fetch_roms.py
 
 install: openql
@@ -77,6 +90,6 @@ install: openql
 	install -D -m 644 roms.json $(DESTDIR)$(PREFIX)/share/openql/roms.json
 
 clean:
-	rm -f build/openql-res.o openql qlrun tests/ql_test tests/superql_test tests/fdc_test tests/settings_test tests/hostdir_test
+	rm -f build/openql-res.o openql qlrun tests/ql_test tests/superql_test tests/fdc_test tests/settings_test tests/hostdir_test tests/fpu_test tests/fpu_soft_test
 
 .PHONY: all test install clean
