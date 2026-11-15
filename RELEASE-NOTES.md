@@ -18,7 +18,7 @@ Not yet: the QL's microdrives, the network, serial input, the floppy controller'
 
 New since v0.1.0:
 
-- Native builds for Apple silicon and for Linux on ARM64. The Super QL's 68040 FPU no longer needs the x87's 80-bit long double: on ARM64 it works its 80-bit values out in integers, as AmiCradle's AC090 does on the Raspberry Pi 5. Arithmetic, conversions and packed decimal give the same bits as the x86 build (checked by `make test` on every build); the transcendentals are correctly rounded, where the x86 build's C library is out by an ulp now and then.
+- Native builds for Apple silicon and for Linux on ARM64. The Super QL's 68040 FPU no longer needs the x87's 80-bit long double: on ARM64 it works its 80-bit values out in integers, as AmiCradle's AC090 does on the Raspberry Pi 5. Arithmetic, conversions and packed decimal give the same bits as the x86 build (checked by `make test` on every build); the transcendentals are correctly rounded, where the x86 build's C library is out by an ulp now and then. The Windows and Intel macOS builds use the integer FPU too, so they give Linux's bits where their C libraries used to round FMOD, FINT, FSIN of a large angle and others their own way.
 - AC090's interpreter runs plain instructions without its per-step checks: the same frames, faster.
 - `openql -H` takes `-i key:NAME@T` and `-i type:TEXT@T`, so both machines can be driven without a window. CI now boots SMSQ/E and checks that SuperBASIC answers, as it does for Minerva.
 - `-m` says when it is outside the machine's range, and refuses a value that is not a number.

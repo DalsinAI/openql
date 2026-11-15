@@ -1,8 +1,8 @@
 /*
  * The 68040 FPU's results, bit for bit, on every host.
  *
- * The x86 build does the FPU's arithmetic on the x87; ARM64 builds (Apple
- * Silicon, Linux on a Raspberry Pi) do it in integers (src/cpu/fpu_soft.c).
+ * The x86 Linux build does the FPU's arithmetic on the x87; the others
+ * (ARM64, and x86 macOS and Windows) do it in integers (src/cpu/fpu_soft.c).
  * This runs the same instructions on both and checks they give the same
  * bits: random operands (ordinary numbers, the ends of the range,
  * denormals, zeros, infinities, quiet and signalling NaNs, unnormals and
@@ -259,8 +259,8 @@ static void fixed(void) {
     c->fpcr = 0;
 }
 
-/* The hashes every build gives, from the x86 build's x87, and from the
- * integer builds (x86 with -DAC090_FPU_SOFT=1, ARM64). */
+/* The hashes every build gives, from the x86 Linux build's x87, and from
+ * the integer builds (every other host, and x86 with -DAC090_FPU_SOFT=1). */
 #define CASES 60000
 #define HASH_EXACT 0xd61a6eeecb3d9d31ull
 #define HASH_TRANS_SOFT 0x5ef4252d97dcd1d6ull

@@ -26,14 +26,16 @@ enum { AC090_CLR_IC_ALL,     /* CINVA/CPUSHA of the instruction cache: every tra
        AC090_CLR_MMU,        /* TC, URP or SRP loads that changed the tables seen (cache_epoch) */
        AC090_CLR_MMU_SAME }; /* ones that loaded the same tables again: translations untouched */
 
-/* The FPU's registers. On x86 hosts long double is the x87's 80-bit
+/* The FPU's registers. On x86 Linux (glibc) long double is the x87's 80-bit
  * extended format, the 68881's own less its 16 unused bits, and FP0-FP7
- * are held in it. Elsewhere (ARM64: Apple Silicon, where long double is
- * binary64, and Linux, where it is IEEE quad) they are held as the 80 bits
- * themselves and fpu_soft.c does the arithmetic in integers.
- * -DAC090_FPU_SOFT=1 takes that way on x86 too (the tests do). */
+ * are held in it. Elsewhere they are held as the 80 bits themselves and
+ * fpu_soft.c does the arithmetic in integers: on ARM64 (Apple silicon,
+ * where long double is binary64, and Linux, where it is IEEE quad), and on
+ * x86 macOS and Windows too, whose C libraries round FMOD, FINT, FSIN and
+ * the rest differently from glibc's, so that every build gives Linux's bits.
+ * -DAC090_FPU_SOFT=0 or 1 chooses either way (the tests build both). */
 #ifndef AC090_FPU_SOFT
-#if defined(__x86_64__) || defined(__i386__)
+#if (defined(__x86_64__) || defined(__i386__)) && defined(__GLIBC__)
 #define AC090_FPU_SOFT 0
 #else
 #define AC090_FPU_SOFT 1
