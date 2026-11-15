@@ -65,21 +65,40 @@ static uint8_t ipc_row(const ql_ipc *p, int row) {
     return bits;
 }
 
+static void ser_poll(ql *q);
+
 static void ipc_command(ql *q) {
     ql_ipc *p = &q->ipc;
     p->out_n = p->out_pos = 0;
     switch (p->cmd) {
     case 1: {                               /* status */
+        ser_poll(q);
         int queued = p->q_head != p->q_tail;
         uint8_t s = 0;
         if (queued || ipc_key_held(p)) s |= 1;
         if (p->sound_on && q->cpu.clock < p->sound_until) s |= 2;
         if (ipc_key_held(p)) s |= 8;
+        if (p->sb_n[0]) s |= 0x10;          /* input waiting on ser1 */
+        if (p->sb_n[1]) s |= 0x20;          /* ... on ser2 */
         ipc_put(p, s, 8);
         break;
     }
-    case 6: case 7:                         /* serial input: none */
-        ipc_put(p, 0, 8);
+    case 2: case 3:                         /* open ser1, ser2 */
+        p->ser_open[p->cmd - 2] = 1;
+        break;
+    case 4: case 5:                         /* close: what the IPC held is dropped */
+        p->ser_open[p->cmd - 4] = 0;
+        p->sb_n[p->cmd - 4] = 0;
+        break;
+    case 6: case 7: {                       /* read ser1, ser2: a count, then the bytes */
+        int port = p->cmd - 6, n = p->sb_n[port];
+        ipc_put(p, (uint32_t)n, 8);
+        for (int i = 0; i < n; i++) ipc_put(p, p->serbuf[port][i], 8);
+        p->sb_n[port] = 0;
+        break;
+    }
+    case 13:                                /* baud rate, both ports */
+        p->baud = p->param[0] & 7;
         break;
     case 8: {                               /* read keyboard */
         int n = 0;
@@ -128,6 +147,36 @@ static void ipc_command(ql *q) {
         break;
     }
     p->phase = p->out_n ? 2 : 0;
+}
+
+/* Serial input: bytes from the host into the IPC's buffer, one per character
+ * time at the baud rate, while the port is open. */
+static void ser_poll(ql *q) {
+    ql_ipc *p = &q->ipc;
+    static const uint32_t rates[8] = { 19200, 9600, 4800, 2400, 1200, 600, 300, 75 };
+    if (q->cpu.clock < p->ser_next) return;
+    int moved = 0;
+    for (int port = 0; port < 2; port++) {
+        if (!p->ser_open[port] || p->sq_head[port] == p->sq_tail[port] || p->sb_n[port] >= QL_IPC_SERBUF) continue;
+        p->serbuf[port][p->sb_n[port]++] = p->serq[port][p->sq_tail[port]];
+        p->sq_tail[port] = (p->sq_tail[port] + 1) % QL_SERQ;
+        moved = 1;
+    }
+    if (moved) p->ser_next = q->cpu.clock + (uint64_t)QL_CLOCK_HZ * 11 / rates[p->baud & 7];
+}
+
+int ql_serial_space(const ql *q, int port) {
+    const ql_ipc *p = &q->ipc;
+    if (port < 0 || port > 1) return 0;
+    return QL_SERQ - 1 - (p->sq_head[port] - p->sq_tail[port] + QL_SERQ) % QL_SERQ;
+}
+
+int ql_serial_in(ql *q, int port, uint8_t ch) {
+    ql_ipc *p = &q->ipc;
+    if (ql_serial_space(q, port) <= 0) return -1;
+    p->serq[port][p->sq_head[port]] = ch;
+    p->sq_head[port] = (p->sq_head[port] + 1) % QL_SERQ;
+    return 0;
 }
 
 /* A write to pc_ipcwr: %11x0 sends bit x, or clocks the next reply bit out. */

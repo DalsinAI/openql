@@ -52,6 +52,8 @@
 
 /* master chip interrupt register bits (keys/q40) */
 enum { SQL_IR_KBD = 1 << 1, SQL_IR_SER = 1 << 2, SQL_IR_FRAME = 1 << 3, SQL_IR_EINT = 1 << 4 };
+/* the external interrupt register: the ISA card's IRQ lines (keys/q40) */
+enum { SQL_EIR_IRQ3 = 1 << 0, SQL_EIR_IRQ4 = 1 << 1, SQL_EIR_FDC = 1 << 3, SQL_EIR_IDE = 1 << 6 };
 /* display modes (q40_dmode) */
 enum { SQL_D_QL8 = 0, SQL_D_QL4 = 1, SQL_D_SMALL = 2, SQL_D_LARGE = 3 };
 
@@ -74,6 +76,7 @@ typedef struct sql_ide {              /* one ATA disk, PIO, on the primary chann
     uint32_t lba;
     int read_only;
     int geometry;                     /* the QLWA header names no geometry: the disk's is shown in sector 0 */
+    int intrq;                        /* INTRQ (IRQ 14): a command or a sector done, until the status is read */
 } sql_ide;
 
 typedef struct superql {
@@ -144,6 +147,7 @@ void sql_mouse_move(superql *s, int dx, int dy);
 void sql_mouse_buttons(superql *s, uint8_t buttons);
 /* A byte coming in on a COM port (0-3). */
 void sql_serial_in(superql *s, int port, uint8_t ch);
+int sql_serial_space(const superql *s, int port);   /* bytes the port's receive FIFO can still take */
 
 /* The picture now, SQL_OUT_W x SQL_OUT_H, 0x00RRGGBB: QL modes are doubled,
  * the small 16-bit mode is doubled, the large one is as it is. */

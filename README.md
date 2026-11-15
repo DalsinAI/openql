@@ -53,7 +53,10 @@ They go to `~/.local/share/openql/roms` (`%APPDATA%\openql\roms` on Windows, or 
 | `-f FILE` | A floppy image in the Super QL's FLP1_, a second in FLP2_: raw, 720 KB, 1.44 MB or 2.88 MB. A read-only file is a write-protected disk; an empty file is a blank disk to FORMAT |
 | `-d FILE` | A microdrive cartridge in the QL's mdv1_, a second in mdv2_: a `.mdv` image of 255 sectors of 686 bytes (QLAY, MiSTer). A new or empty file is a blank cartridge to FORMAT; a read-only file has its write-protect tab out. Writes are saved to the file when the drive stops |
 | `-c FILE` | A 16 KB cartridge in the QL's ROM port |
-| `-s FILE`, `-p FILE` | ser1 (COM1) and the Super QL's LPT1 output |
+| `-s FILE` | ser1's (COM1's) output goes to a file |
+| `-s tcp:PORT`, `-s tcp:HOST:PORT` | ser1 as a null-modem cable over TCP, both ways: openql listens on 127.0.0.1:PORT, or connects to HOST:PORT. Two openqls joined this way can `COPY` files between them, and a terminal program (`nc 127.0.0.1 PORT`) can talk to the QL |
+| `-S FILE` | ser1's input: the file's bytes come in once, when a program opens ser1 |
+| `-p FILE` | The Super QL's LPT1 output |
 | `-F`, `-q` | Full screen; no sound |
 | `-H SECONDS`, `-o FILE.ppm` | No window: run that long as fast as the host goes, then save the screen (tests) |
 | `-i key:NAME@T`, `-i type:TEXT@T` | With `-H`, press a key (`f1` to `f10`, `enter`, `esc`, `space`, `tab`, the arrows) or type text (`\n` for ENTER) at T seconds, on either machine |
@@ -62,7 +65,7 @@ In the window: **F11** full screen, **Ctrl+F12** the reset button, **Ctrl+Shift+
 
 ## What is not done yet
 
-The QL's disks, the Super QL floppy controller's interrupt, the network, and serial input from the host. The QL's BEEP plays its pitch only (no sweeps or fuzz). See `docs/` for each board.
+The QL's disks, and the QL's own network (QLAN) wire: two machines talk through ser1 over TCP instead. The QL's BEEP plays its pitch only (no sweeps or fuzz). See `docs/` for each board.
 
 ## Layout
 

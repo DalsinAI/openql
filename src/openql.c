@@ -2,7 +2,7 @@
  * openql: a Sinclair QL or a Super QL in one window, as a single program.
  *
  *   openql [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]]
- *          [-d MDV [-d MDV]] [-c CART] [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-q]
+ *          [-d MDV [-d MDV]] [-c CART] [-p PRINTER-FILE] [-s FILE|tcp:[HOST:]PORT] [-S FILE] [-F] [-q]
  *          [-H SECONDS [-o FRAME.ppm] [-i INPUT]...]
  *
  *   -M  the machine: ql (a 68008 QL, Minerva) or superql (the default: a
@@ -20,7 +20,10 @@
  *       blank cartridge to FORMAT; a read-only file has its tab out
  *   -c  a 16 KB ROM cartridge for the QL's ROM port
  *   -p  the Super QL's LPT1 output goes to this file
- *   -s  ser1's (COM1's) output goes to this file
+ *   -s  ser1 (COM1): its output goes to this file; or tcp:PORT, a null-modem
+ *       cable on 127.0.0.1:PORT both ways (openql listens), or tcp:HOST:PORT
+ *       (openql connects: two openqls, or a terminal program)
+ *   -S  ser1's input: the bytes of this file come in once, at the baud rate
  *   -F  start full screen
  *   -q  no sound
  *   -H  run without a window for this many seconds, then stop (tests); -o
@@ -41,6 +44,7 @@
  */
 #include "ql/ql.h"
 #include "superql/superql.h"
+#include "hostser.h"
 #include <SDL.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,7 +56,8 @@ enum { M_QL, M_SUPERQL };
 static int machine = M_SUPERQL;
 static ql q;
 static superql s;
-static FILE *serial_file, *printer_file;
+static FILE *printer_file;
+static hostser *ser1;               /* ser1's (COM1's) host end: stdout, a file, input from a file, TCP */
 
 /* ---- the keyboard ------------------------------------------------------ */
 
@@ -161,9 +166,20 @@ static void raw_key(uint8_t raw) {
 static void serial_out(void *opaque, int port, uint8_t ch) {
     (void)opaque;
     if (port != 0) return;
-    FILE *f = serial_file ? serial_file : stdout;
-    fputc(ch, f);
-    fflush(f);
+    hostser_put(ser1, ch);
+}
+
+/* What came in on ser1's host end goes to the machine, as fast as it takes it. */
+static void serial_frame(void) {
+    hostser_poll(ser1);
+    for (int n = 0; n < 4096; n++) {
+        int room = machine == M_QL ? ql_serial_space(&q, 0) : sql_serial_space(&s, 0);
+        if (room <= 0) break;
+        int c = hostser_get(ser1);
+        if (c < 0) break;
+        if (machine == M_QL) ql_serial_in(&q, 0, (uint8_t)c);
+        else sql_serial_in(&s, 0, (uint8_t)c);
+    }
 }
 
 static void printer_out(void *opaque, uint8_t ch) {
@@ -175,6 +191,7 @@ static int pic_w(void) { return machine == M_QL ? QL_SCREEN_W : SQL_OUT_W; }
 static int pic_h(void) { return machine == M_QL ? QL_SCREEN_H : SQL_OUT_H; }
 
 static void run_frame(void) {
+    serial_frame();
     if (machine == M_QL) ql_run(&q, q.cpu.clock + QL_FRAME_CLOCKS);
     else sql_run(&s, s.cpu.clock + SQL_FRAME_CLOCKS);
 }
@@ -369,15 +386,16 @@ static void inputs_at(double now) {
 
 static void usage(void) {
     fprintf(stderr, "usage: openql [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]]\n"
-                    "              [-d MDV [-d MDV]] [-c CART] [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-q]\n"
+                    "              [-d MDV [-d MDV]] [-c CART] [-p PRINTER-FILE] [-s FILE|tcp:[HOST:]PORT] [-S FILE] [-F] [-q]\n"
                     "              [-H SECONDS [-o FRAME.ppm] [-i key:NAME@T | -i type:TEXT@T]...]\n");
 }
 
 int main(int argc, char **argv) {
+    const char *ser_in = NULL;
     const char *rom = NULL, *win1 = NULL, *cart = NULL, *prn = NULL, *ser = NULL, *dump = NULL, *flp[2] = { NULL, NULL }, *mdv[2] = { NULL, NULL };
     int ram = -1, ro = 0, full = 0, quiet = 0, nflp = 0, nmdv = 0, opt;
     double headless = 0;
-    while ((opt = getopt(argc, argv, "M:r:m:w:Rf:d:c:p:s:FqH:o:i:h")) != -1) {
+    while ((opt = getopt(argc, argv, "M:r:m:w:Rf:d:c:p:s:S:FqH:o:i:h")) != -1) {
         switch (opt) {
         case 'M':
             if (!strcmp(optarg, "ql")) machine = M_QL;
@@ -400,6 +418,7 @@ int main(int argc, char **argv) {
         case 'c': cart = optarg; break;
         case 'p': prn = optarg; break;
         case 's': ser = optarg; break;
+        case 'S': ser_in = optarg; break;
         case 'F': full = 1; break;
         case 'H': headless = atof(optarg); break;
         case 'o': dump = optarg; break;
@@ -412,7 +431,8 @@ int main(int argc, char **argv) {
                 machine == M_QL ? "minerva" : "smsqe");
         return 1;
     }
-    if (ser && !(serial_file = fopen(ser, "ab"))) perror(ser);
+    if (ser && !(ser1 = hostser_open(ser))) return 1;
+    if (ser_in && hostser_input_file(&ser1, ser_in)) return 1;
     if (prn && !(printer_file = fopen(prn, "ab"))) perror(prn);
 
     if (ram > 0) {   /* say so when the board will take a different size */
@@ -456,6 +476,7 @@ int main(int argc, char **argv) {
         free(pic);
         if (machine == M_QL) ql_free(&q);
         else sql_free(&s);
+        hostser_close(ser1);
         return rc;
     }
 
@@ -570,6 +591,7 @@ int main(int argc, char **argv) {
     }
     if (machine == M_QL) ql_free(&q);
     else sql_free(&s);
+    hostser_close(ser1);
     if (audio) SDL_CloseAudioDevice(audio);
     if (astream) SDL_FreeAudioStream(astream);
     SDL_DestroyTexture(tex);

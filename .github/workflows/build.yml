@@ -47,3 +47,18 @@ jobs:
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ff0000 100000              # its windows
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" 00ff00 200 0,408,1024,512  # the line typed, in #0
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ffffff 60 516,2,600,24     # the 42, in #1
+      - name: Serial input reaches SuperBASIC on both machines
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          printf 'HELLO QL\n' > "$RUNNER_TEMP/in.txt"
+          ./openql -M ql -S "$RUNNER_TEMP/in.txt" -H 14 -i key:f1@3 -i 'type:OPEN #3,ser1:INPUT #3,a$:PRINT a$\n@6' -o "$RUNNER_TEMP/qser.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/qser.ppm" ffffff 60 258,1,340,12     # HELLO QL, in #1
+          ./openql -S "$RUNNER_TEMP/in.txt" -H 16 -i 'type:OPEN #3,ser1:INPUT #3,a$:PRINT a$\n@8' -o "$RUNNER_TEMP/sser.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/sser.ppm" ffffff 200 516,2,700,24    # HELLO QL, in #1
+      - name: ser1 over TCP, both ways
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          ./openql -M ql -s tcp:5599 -H 3000 -i key:f1@3 -i 'type:OPEN #3,ser1:INPUT #3,a$:PRINT #3,a$&"!"\n@6' &
+          pid=$!
+          python3 -I tests/serial_tcp.py 5599 'OVER TCP' 'OVER TCP!'
+          kill $pid || true

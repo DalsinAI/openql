@@ -28,6 +28,8 @@
 #define QL_SCREEN_W     512
 #define QL_SCREEN_H     256
 #define QL_KEYQ         16
+#define QL_SERQ         4096            /* bytes on their way in to a serial port, not yet in the IPC */
+#define QL_IPC_SERBUF   24              /* the IPC's own buffer for each port (QDOS reads it whole) */
 #define QL_MDV_DRIVES   8               /* mdv1_ to mdv8_: two in the QL, six more on its expansion port */
 #define QL_MDV_GAP      0x100           /* a tape cell with no signal */
 
@@ -51,7 +53,7 @@ typedef struct ql_ipc {
     int cmd;
     uint32_t in_bits, in_n, in_want;
     uint8_t param[8];           /* the parameters as bytes, as they arrived */
-    uint8_t out[64];            /* the reply, one bit per byte */
+    uint8_t out[8 + 8 * QL_IPC_SERBUF];   /* the reply, one bit per byte */
     int out_n, out_pos;
     int out_bit;                /* the bit pc_ipcrd shows in bit 7 */
     /* Keyboard: what is held now (64 keys by keyrow code, the IPC's
@@ -62,6 +64,16 @@ typedef struct ql_ipc {
     uint8_t q_key[QL_KEYQ], q_sca[QL_KEYQ];
     int q_head, q_tail;
     int lost;                   /* the queue overflowed: the next read says so */
+    /* Serial input: ser1 and ser2. Bytes from the host wait in serq and
+     * come into the IPC's buffer at the baud rate while the port is open;
+     * QDOS reads them with commands 6 and 7. */
+    uint8_t serq[2][QL_SERQ];
+    int sq_head[2], sq_tail[2];
+    uint8_t serbuf[2][QL_IPC_SERBUF];
+    int sb_n[2];
+    int ser_open[2];
+    uint8_t baud;               /* command 13's rate, 0 = 19200 .. 7 = 75 */
+    uint64_t ser_next;          /* the clock at which the next byte may come in */
     /* Sound (BEEP): the last request, kept for the runtime to play. */
     int sound_on;
     uint64_t sound_until;
@@ -133,6 +145,11 @@ int ql_mdv_gap(ql *q);
 void ql_key(ql *q, int code, int down);
 void ql_modifiers(ql *q, int shift, int ctrl, int alt);
 int ql_key_for_ascii(int ch, int *shift);   /* -1 if the QL has no key for it */
+
+/* A byte coming in on ser1 (port 0) or ser2 (1). Returns 0, or -1 when the
+ * port's queue is full (the host should hold the byte back). */
+int ql_serial_in(ql *q, int port, uint8_t ch);
+int ql_serial_space(const ql *q, int port);
 enum {
     QLK_ENTER = 48, QLK_LEFT = 49, QLK_UP = 50, QLK_ESC = 51, QLK_RIGHT = 52,
     QLK_SPACE = 54, QLK_DOWN = 55, QLK_F1 = 57, QLK_F2 = 59, QLK_F3 = 60,

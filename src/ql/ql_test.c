@@ -171,6 +171,20 @@ int main(void) {
     CHECK(rd(&q, 0x18021, 1) & 0x01, "the gap after the header interrupts");
     ql_mdv_eject(&q, 0);
     remove(mdv_path);
+    /* serial input: held until ser1 is open, then in the IPC's buffer at the baud rate */
+    for (const char *p = "QL!"; *p; p++) ql_serial_in(&q, 0, (uint8_t)*p);
+    ql_run(&q, q.cpu.clock + QL_FRAME_CLOCKS);
+    CHECK(!(ipc(&q, 1, 0, 0, 8) & 0x10), "ser1 closed: nothing comes in");
+    ipc(&q, 2, 0, 0, 0);                                /* open ser1 */
+    ipc(&q, 13, 1, 4, 0);                               /* 9600 baud */
+    ql_run(&q, q.cpu.clock + QL_FRAME_CLOCKS);
+    for (int i = 0; i < 4; i++) { ipc(&q, 1, 0, 0, 8); ql_run(&q, q.cpu.clock + QL_FRAME_CLOCKS / 8); }
+    CHECK(ipc(&q, 1, 0, 0, 8) & 0x10, "input waiting on ser1");
+    uint32_t cnt = ipc(&q, 6, 0, 0, 8);
+    char got[4] = { 0 };
+    for (uint32_t i = 0; i < cnt && i < 3; i++) got[i] = (char)link_bits(&q, 0xff, 8);
+    CHECK(cnt == 3 && !strcmp(got, "QL!"), "read ser1: %u bytes, \"%s\"", cnt, got);
+    CHECK(!(ipc(&q, 1, 0, 0, 8) & 0x10), "and nothing more");
 
     printf(fails ? "ql_test: %d failed\n" : "ql_test: all passed\n", fails);
     ql_free(&q);

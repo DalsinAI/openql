@@ -12,9 +12,13 @@ No ROM is included. Fetch them on request with `openql-fetch-roms minerva` and `
 | `openql-windows-x86_64.zip` | Windows 10 and 11, x86-64 (SDL2 included) |
 | `openql-macos-x86_64.tar.gz` | macOS on Intel, and Apple silicon through Rosetta (SDL2 included; the first time, right-click and Open) |
 
-Not yet: the network, serial input, the floppy controller's interrupt.
+Not yet: the QL's own network (QLAN) wire.
 
 New since v0.1.0:
+
+- **Serial input** on both machines: `-S FILE` sends a file in on ser1 (COM1), and `-s tcp:PORT` or `-s tcp:HOST:PORT` makes ser1 a null-modem cable over TCP, both ways, between two openqls or to a terminal program.
+- **The Super QL's external interrupt register** shows the multi-I/O card's IRQ lines: the floppy controller (IRQ 6), the IDE disk (IRQ 14) and the serial ports (IRQ 3 and 4).
+- Floppy: a seek's status is no longer mixed up with the reset's polling statuses, so SMSQ/E's FORMAT gets through its tracks.
 
 - **Microdrives on the QL**: `-d FILE` puts a `.mdv` cartridge image in mdv1_ (a second `-d`: mdv2_), or drop one on the window. QDOS's own microdrive code reads, writes and FORMATs it through the ZX8302, at the tape's real speed. A new file is a blank cartridge.
 
