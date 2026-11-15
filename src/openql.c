@@ -3,7 +3,7 @@
  *
  *   openql [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]]
  *          [-c CART] [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-q]
- *          [-H SECONDS [-o FRAME.ppm]]
+ *          [-H SECONDS [-o FRAME.ppm] [-i INPUT]...]
  *
  *   -M  the machine: ql (a 68008 QL, Minerva) or superql (the default: a
  *       Q40/Q60-compatible board with a 68040, SMSQ/E)
@@ -22,6 +22,8 @@
  *   -q  no sound
  *   -H  run without a window for this many seconds, then stop (tests); -o
  *       writes the last frame there as a PPM
+ *   -i  with -H, keys to press: key:NAME@T (f1..f10, enter, esc, space, tab,
+ *       up, down, left, right) or type:TEXT@T (\n for ENTER), T in seconds
  *
  * In the window: F11 full screen, Ctrl+F12 the reset button (RAM kept),
  * Ctrl+Shift+F12 a power cycle, Ctrl+F10 pause, Ctrl+F9 takes the disk out
@@ -278,18 +280,92 @@ static void aim(int x, int y) {
     aim_x = x; aim_y = y;
 }
 
+/* ---- keys typed without a window (-H with -i) ----------------------------- */
+
+/* Each press is an Amiga raw key, held for 60 ms, with SHIFT around it when
+ * the character needs it; the next comes 120 ms later. Both boards take
+ * these through raw_key(), as they take the window's keys. */
+typedef struct { double at; uint8_t raw; uint8_t shift; } press;
+static press presses[4096];
+static int npress;
+
+static int raw_for_ascii(int ch, int *shift) {
+    static const char plain[] = "`1234567890-=\\qwertyuiop[]asdfghjkl;'zxcvbnm,./";
+    static const char shifted[] = "~!@#$%^&*()_+|QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>?";
+    static const uint8_t raw[] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a,
+        0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a,
+    };
+    *shift = 0;
+    if (ch == ' ') return 0x40;
+    if (ch == '\n') return 0x44;
+    const char *p = ch ? strchr(plain, ch) : NULL;
+    if (p) return raw[p - plain];
+    if (ch && (p = strchr(shifted, ch))) { *shift = 1; return raw[p - shifted]; }
+    return -1;
+}
+
+static void add_input(const char *spec) {
+    const char *at = strrchr(spec, '@');
+    if (!at) { fprintf(stderr, "openql: input needs @T: %s\n", spec); exit(2); }
+    double t = atof(at + 1);
+    if (!strncmp(spec, "key:", 4)) {
+        static const struct { const char *name; uint8_t raw; } k[] = {
+            { "f1", 0x50 }, { "f2", 0x51 }, { "f3", 0x52 }, { "f4", 0x53 }, { "f5", 0x54 },
+            { "f6", 0x55 }, { "f7", 0x56 }, { "f8", 0x57 }, { "f9", 0x58 }, { "f10", 0x59 },
+            { "enter", 0x44 }, { "esc", 0x45 }, { "space", 0x40 }, { "tab", 0x42 },
+            { "up", 0x4c }, { "down", 0x4d }, { "right", 0x4e }, { "left", 0x4f },
+        };
+        size_t n = (size_t)(at - spec - 4);
+        for (size_t i = 0; i < sizeof k / sizeof k[0]; i++)
+            if (strlen(k[i].name) == n && !strncmp(spec + 4, k[i].name, n) && npress < 4096) {
+                presses[npress++] = (press){ t, k[i].raw, 0 };
+                return;
+            }
+        fprintf(stderr, "openql: no key %.*s\n", (int)n, spec + 4);
+        exit(2);
+    } else if (!strncmp(spec, "type:", 5)) {
+        for (const char *c = spec + 5; c < at && npress < 4096; c++) {
+            int ch = *c, shift;
+            if (ch == '\\' && c + 1 < at && c[1] == 'n') { ch = '\n'; c++; }
+            int r = raw_for_ascii(ch, &shift);
+            if (r < 0) { fprintf(stderr, "openql: no key for '%c'\n", ch); exit(2); }
+            presses[npress++] = (press){ t, (uint8_t)r, (uint8_t)shift };
+            t += 0.12;
+        }
+    } else { fprintf(stderr, "openql: unknown input %s (key:NAME@T or type:TEXT@T)\n", spec); exit(2); }
+}
+
+/* The presses that start or end in the frame that begins at `now`. */
+static void inputs_at(double now) {
+    const double half = 0.5 / 50;
+    for (int i = 0; i < npress; i++) {
+        double down = presses[i].at, up = presses[i].at + 0.06;
+        if (now >= down - half && now < down + half) {
+            if (presses[i].shift) raw_key(0x60);
+            raw_key(presses[i].raw);
+        } else if (now >= up - half && now < up + half) {
+            raw_key(presses[i].raw | 0x80);
+            if (presses[i].shift) raw_key(0x60 | 0x80);
+        }
+    }
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 static void usage(void) {
     fprintf(stderr, "usage: openql [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]]\n"
-                    "              [-c CART] [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-q] [-H SECONDS [-o FRAME.ppm]]\n");
+                    "              [-c CART] [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-q]\n"
+                    "              [-H SECONDS [-o FRAME.ppm] [-i key:NAME@T | -i type:TEXT@T]...]\n");
 }
 
 int main(int argc, char **argv) {
     const char *rom = NULL, *win1 = NULL, *cart = NULL, *prn = NULL, *ser = NULL, *dump = NULL, *flp[2] = { NULL, NULL };
     int ram = -1, ro = 0, full = 0, quiet = 0, nflp = 0, opt;
     double headless = 0;
-    while ((opt = getopt(argc, argv, "M:r:m:w:Rf:c:p:s:FqH:o:h")) != -1) {
+    while ((opt = getopt(argc, argv, "M:r:m:w:Rf:c:p:s:FqH:o:i:h")) != -1) {
         switch (opt) {
         case 'M':
             if (!strcmp(optarg, "ql")) machine = M_QL;
@@ -297,7 +373,13 @@ int main(int argc, char **argv) {
             else { fprintf(stderr, "openql: no machine %s (ql or superql)\n", optarg); return 2; }
             break;
         case 'r': rom = optarg; break;
-        case 'm': ram = atoi(optarg); break;
+        case 'm': {
+            char *end;
+            long v = strtol(optarg, &end, 10);
+            if (end == optarg || *end || v <= 0 || v > 1 << 20) { fprintf(stderr, "openql: -m %s is not a RAM size\n", optarg); return 2; }
+            ram = (int)v;
+            break;
+        }
         case 'w': win1 = optarg; break;
         case 'R': ro = 1; break;
         case 'f': if (nflp < 2) flp[nflp++] = optarg; break;
@@ -308,6 +390,7 @@ int main(int argc, char **argv) {
         case 'F': full = 1; break;
         case 'H': headless = atof(optarg); break;
         case 'o': dump = optarg; break;
+        case 'i': add_input(optarg); break;
         default: usage(); return 2;
         }
     }
@@ -319,6 +402,12 @@ int main(int argc, char **argv) {
     if (ser && !(serial_file = fopen(ser, "ab"))) perror(ser);
     if (prn && !(printer_file = fopen(prn, "ab"))) perror(prn);
 
+    if (ram > 0) {   /* say so when the board will take a different size */
+        int lo = machine == M_QL ? 128 : 4, hi = machine == M_QL ? 896 : (int)SQL_MAX_RAM_MB;
+        if (ram < lo || ram > hi)
+            fprintf(stderr, "openql: -m %d is outside %d to %d %s; using %d\n", ram, lo, hi,
+                    machine == M_QL ? "KB" : "MB", ram < lo ? lo : hi);
+    }
     keymap_init();
     const char *title;
     if (machine == M_QL) {
@@ -343,12 +432,16 @@ int main(int argc, char **argv) {
     if (!pic) return 1;
 
     if (headless > 0) {                    /* as fast as the host goes: tests and boot checks */
-        for (long f = 0; f < (long)(headless * 50) && !halted(); f++) run_frame();
+        for (long f = 0; f < (long)(headless * 50) && !halted(); f++) { inputs_at(f / 50.0); run_frame(); }
         if (halted()) fprintf(stderr, "openql: the CPU halted (double fault) at pc %08x\n", pc());
         render(pic);
         if (dump) save_ppm(dump, pic);
         fprintf(stderr, "openql: pc %08x after %.1f s\n", pc(), headless);
-        return halted() ? 1 : 0;
+        int rc = halted() ? 1 : 0;
+        free(pic);
+        if (machine == M_QL) ql_free(&q);
+        else sql_free(&s);
+        return rc;
     }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) { fprintf(stderr, "openql: %s\n", SDL_GetError()); return 1; }
@@ -466,5 +559,6 @@ int main(int argc, char **argv) {
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
+    free(pic);
     return 0;
 }
