@@ -13,10 +13,10 @@ Releases for Linux, Windows and macOS are on the Releases page. OpenQL draws in 
 
 ## Build
 
-Needs a C compiler, SDL2 and Python 3 (for the ROM fetcher and the tests).
+Needs a C compiler, SDL2 and Python 3 (for the ROM fetcher and the tests). The launcher and the F12 menu are the host's own windows and controls (GTK 3 on Linux, Win32 on Windows, Cocoa on macOS) through [libui-ng](https://github.com/libui-ng/libui-ng) (MIT), which `make` fetches and builds into `build/` the first time, with git, meson and ninja.
 
 ```sh
-sudo apt install build-essential libsdl2-dev   # Debian, Ubuntu
+sudo apt install build-essential libsdl2-dev libgtk-3-dev meson ninja-build git   # Debian, Ubuntu
 make
 make test
 ```
@@ -81,7 +81,7 @@ A host folder on the QL (which has only its microdrives) and as a hard disk (WIN
 | Path | What it is |
 | --- | --- |
 | `src/openql.c` | The program: the window, keyboard, mouse and timing, the launcher and the menu |
-| `src/ui/` | openql's own screens: drawing, lists, the file browser, and an 8 x 16 font from DejaVu Sans Mono |
+| `src/gui.c` | openql's own windows (the launcher and the F12 menu), made of the host's controls through libui-ng |
 | `src/settings.c` | The launcher's settings file and openql's folders |
 | `src/state.h` | Saved states' header and the CPU's part |
 | `src/hostser.c`, `src/hostdir.c` | ser1's host end (a file, TCP); a host folder as a QLWA disk |

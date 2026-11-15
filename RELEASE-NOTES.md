@@ -16,8 +16,8 @@ Not yet: the QL's own network (QLAN) wire.
 
 New since v0.1.0:
 
-- **A launcher**: `openql` on its own opens a screen to choose the machine, memory, disks, picture, speed and sound, and to **Get QL/E** (downloaded from sinclairql.net and put in WIN1_ with the settings it wants) or fetch the ROMs. It remembers the choices.
-- **A menu on F12**: swap floppies and cartridges (or make a blank one), saved states in four slots, type the clipboard in (also Ctrl+Shift+V), speed (2x, 4x, as fast as it goes; Ctrl+F8), the picture's scaling (4:3, whole pixels, fill), full screen, reset, back to the launcher.
+- **A launcher**: `openql` on its own opens a window of the host's own controls (GTK, Win32 or Cocoa, in the system font, under a black and silver Sinclair header) to choose the machine, memory, disks, picture, speed and sound, and to **Get QL/E** (downloaded from sinclairql.net and put in WIN1_ with the settings it wants) or fetch the ROMs. It remembers the choices.
+- **A menu on F12**, a host window too: swap floppies and cartridges (or make a blank one), saved states in four slots, type the clipboard in (also Ctrl+Shift+V), speed (2x, 4x, as fast as it goes; Ctrl+F8), the picture's scaling (4:3, whole pixels, fill), full screen, reset, back to the launcher.
 - **A host folder as a disk**: `-D FOLDER` (or the launcher, or the menu) puts a folder on the host in the Super QL's FLP2_ as a QL disk, and writes what the QL saved back to it when the disk comes out.
 - **Saved states** on both machines, also from the command line: `-l FILE` starts from one, `-O FILE` saves one after `-H`.
 

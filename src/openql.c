@@ -56,7 +56,7 @@
 #include "hostdir.h"
 #include "hostser.h"
 #include "settings.h"
-#include "ui/ui.h"
+#include "gui.h"
 #include <SDL.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -420,13 +420,15 @@ static settings cfg;                   /* what the launcher and the menu set */
 static int use_launcher;               /* openql started without a machine on its command line */
 static SDL_Window *win;
 static SDL_Renderer *ren;
-static SDL_Texture *tex, *uitex;
+static SDL_Texture *tex;
 static uint32_t *pic;
 static int tex_w, tex_h;
 static SDL_Rect pic_dst;               /* where the picture went, in the renderer's pixels */
 static const char *title = "OpenQL";
+static int machine_up;
 static char status[200];               /* the launcher's and the menu's last word */
 static uint32_t status_colour;
+enum { UI_GOOD = 1, UI_BAD, UI_ACCENT, UI_TEXT };
 
 static void say(uint32_t colour, const char *fmt, ...) {
     va_list ap;
@@ -473,33 +475,22 @@ static SDL_Rect picture_rect(int ow, int oh) {
     return r;
 }
 
-static void present(int machine_shown, int ui_shown) {
+static void present(void) {
+    if (!ren) return;
     int ow, oh;
     SDL_GetRendererOutputSize(ren, &ow, &oh);
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderClear(ren);
-    if (machine_shown && tex) {
+    if (tex && machine_up) {
         pic_dst = picture_rect(ow, oh);
         SDL_RenderCopy(ren, tex, NULL, &pic_dst);
-    }
-    if (ui_shown) {
-        SDL_Rect d = fit43(ow, oh);
-        if (!machine_shown) {                       /* the launcher: its own background, edge to edge */
-            SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-            SDL_RenderClear(ren);
-        }
-        SDL_UpdateTexture(uitex, NULL, ui_px, UI_W * 4);
-        SDL_RenderCopy(ren, uitex, NULL, &d);
-        double k = dpi_scale();
-        SDL_Rect wd = { (int)(d.x / k), (int)(d.y / k), (int)(d.w / k), (int)(d.h / k) };
-        ui_set_dst(wd);
     }
     SDL_RenderPresent(ren);
 }
 
 static void set_fullscreen(int on) {
     cfg.fullscreen = on;
-    SDL_SetWindowFullscreen(win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    if (win) SDL_SetWindowFullscreen(win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
 }
 
 /* ---- starting and stopping a machine -------------------------------------------- */
@@ -509,7 +500,6 @@ static const char *rom_for(const settings *c) {
     return own[0] ? own : fetched_rom(c->machine);
 }
 
-static int machine_up;
 
 /* ---- a host folder in FLP2_ (hostdir.h) ---------------------------------------- */
 
@@ -558,7 +548,6 @@ static int machine_start(const settings *c, const char *cart) {
     machine_down();
     machine = c->machine == SET_QL ? M_QL : M_SUPERQL;
     const char *rom = rom_for(c);
-    ui_load_ql_font(rom);                  /* the QL's characters for openql's own screens */
     if (!rom || !file_exists(rom)) {
         say(UI_BAD, "no %s ROM yet: Fetch the ROMs first", machine == M_QL ? "Minerva" : "SMSQ/E");
         return -1;
@@ -602,12 +591,6 @@ static int machine_start(const settings *c, const char *cart) {
     return pic ? 0 : -1;
 }
 
-/* the launcher's rows */
-enum {
-    L_MACHINE = 1, L_RAM, L_ROM, L_WIN1, L_WIN1RO, L_QLE, L_FLP1, L_FLP2, L_HOSTDIR, L_MDV1, L_MDV2,
-    L_SCALE, L_FULL, L_SPEED, L_SOUND, L_AT_START, L_FETCH, L_START, L_QUIT,
-};
-
 /* ---- fetching the ROMs and QL/E -------------------------------------------------- */
 
 /* tools/openql-fetch-roms does the downloading and checking, in a thread of
@@ -616,7 +599,6 @@ static SDL_atomic_t fetch_busy;        /* 1 while it runs */
 static int fetch_rc = -1, fetch_what;  /* its exit status; FETCH_ROMS or FETCH_QLE */
 static char fetch_cmd[4096], fetch_log[SET_PATH];
 enum { FETCH_ROMS = 1, FETCH_QLE };
-static int want_row;                   /* the launcher's row to go to next */
 
 static int fetch_thread(void *unused) {
     (void)unused;
@@ -710,7 +692,6 @@ static void fetch_done(void) {
         snprintf(cfg.win1, sizeof cfg.win1, "%s", fetched_qle());
         cfg.win1_ro = 0;
         say(UI_GOOD, "QL/E is in WIN1_: Start");
-        want_row = L_START;
         return;
     }
     if (fetch_rc == 0 && what == FETCH_ROMS) { say(UI_GOOD, "the ROMs are here"); return; }
@@ -726,26 +707,7 @@ static void fetch_done(void) {
     else say(UI_BAD, "the download failed: %s", last[0] ? last : "see fetch.log");
 }
 
-/* ---- the launcher ------------------------------------------------------------------ */
-
-
-static const int ql_rams[] = { 128, 256, 384, 512, 640, 896 };
-static const int sql_rams[] = { 16, 32, 64, 128 };
-
-static int step_in(const int *v, int n, int now, int d) {
-    int i = 0;
-    while (i < n - 1 && v[i] < now) i++;
-    i = (i + d + n) % n;
-    return v[i];
-}
-
-static ui_row *row(ui_row *rows, int *n, int id, int kind, const char *label) {
-    ui_row *r = &rows[(*n)++];
-    memset(r, 0, sizeof *r);
-    r->id = id; r->kind = kind;
-    snprintf(r->label, sizeof r->label, "%s", label);
-    return r;
-}
+/* ---- what the launcher and the menu ask of openql (gui.h) -------------------------- */
 
 static const char *base_name(const char *p) {
     const char *a = strrchr(p, '/'), *b = strrchr(p, '\\');
@@ -753,409 +715,138 @@ static const char *base_name(const char *p) {
     return a ? a + 1 : p;
 }
 
-static void disk_value(ui_row *r, const char *path) {
-    if (!path[0]) { snprintf(r->value, sizeof r->value, "empty"); r->colour = UI_DIM; return; }
-    snprintf(r->value, sizeof r->value, "%s", path);
-    if (!file_exists(path)) r->colour = UI_BAD;
-}
-
-static int launcher_rows(ui_row *rows) {
-    int n = 0, sql = cfg.machine == SET_SUPERQL;
-    ui_row *r;
-    row(rows, &n, 0, ROW_HEADING, "The machine");
-    r = row(rows, &n, L_MACHINE, ROW_CHOICE, "Machine");
-    snprintf(r->value, sizeof r->value, "%s", sql ? "Super QL: 68040 at 40 MHz, SMSQ/E" : "Sinclair QL: 68008 at 7.5 MHz, Minerva");
-    r = row(rows, &n, L_RAM, ROW_CHOICE, "Memory");
-    if (sql) snprintf(r->value, sizeof r->value, "%d MB", cfg.ram_sql_mb);
-    else snprintf(r->value, sizeof r->value, "%d KB", cfg.ram_ql_kb);
-    r = row(rows, &n, L_ROM, ROW_FILE, "ROM");
-    const char *own = sql ? cfg.rom_sql : cfg.rom_ql;
-    if (own[0]) disk_value(r, own);
-    else if (fetched_rom(cfg.machine)) { snprintf(r->value, sizeof r->value, "%s (fetched)", sql ? "SMSQ/E 3.43" : "Minerva 1.98"); r->colour = UI_GOOD; }
-    else { snprintf(r->value, sizeof r->value, "not fetched yet"); r->colour = UI_BAD; }
-
-    row(rows, &n, 0, ROW_HEADING, "Disks");
-    if (sql) {
-        r = row(rows, &n, L_QLE, ROW_ACTION, "Get QL/E");
-        if (SDL_AtomicGet(&fetch_busy) && fetch_what == FETCH_QLE) { snprintf(r->value, sizeof r->value, "downloading ..."); r->colour = UI_ACCENT; }
-        else if (fetched_qle() && !strcmp(cfg.win1, fetched_qle())) { snprintf(r->value, sizeof r->value, "in WIN1_"); r->colour = UI_GOOD; }
-        else if (fetched_qle()) { snprintf(r->value, sizeof r->value, "downloaded: Enter puts it in WIN1_"); r->colour = UI_GOOD; }
-        else snprintf(r->value, sizeof r->value, "a hard disk full of QL software, from sinclairql.net (80 MB)");
-        r = row(rows, &n, L_WIN1, ROW_FILE, "WIN1_ hard disk");
-        disk_value(r, cfg.win1);
-        if (cfg.win1[0]) {
-            r = row(rows, &n, L_WIN1RO, ROW_CHOICE, "WIN1_ written to");
-            snprintf(r->value, sizeof r->value, "%s", cfg.win1_ro ? "no: read only" : "yes");
-        }
-        r = row(rows, &n, L_FLP1, ROW_FILE, "FLP1_ floppy");
-        disk_value(r, cfg.flp[0]);
-        r = row(rows, &n, L_FLP2, ROW_FILE, "FLP2_ floppy");
-        disk_value(r, cfg.flp[1]);
-        if (cfg.host_dir[0]) { snprintf(r->value, sizeof r->value, "the host folder, below"); r->colour = UI_DIM; r->disabled = 1; }
-        r = row(rows, &n, L_HOSTDIR, ROW_FILE, "A host folder as FLP2_");
-        if (cfg.host_dir[0]) snprintf(r->value, sizeof r->value, "%.250s", cfg.host_dir);
-        else { snprintf(r->value, sizeof r->value, "none: Enter chooses one"); r->colour = UI_DIM; }
-    } else {
-        r = row(rows, &n, L_MDV1, ROW_FILE, "mdv1_ cartridge");
-        disk_value(r, cfg.mdv[0]);
-        r = row(rows, &n, L_MDV2, ROW_FILE, "mdv2_ cartridge");
-        disk_value(r, cfg.mdv[1]);
-    }
-
-    row(rows, &n, 0, ROW_HEADING, "Picture and sound");
-    r = row(rows, &n, L_SCALE, ROW_CHOICE, "Picture");
-    snprintf(r->value, sizeof r->value, "%s", scale_name(cfg.scale));
-    r = row(rows, &n, L_FULL, ROW_CHOICE, "Full screen");
-    snprintf(r->value, sizeof r->value, "%s", cfg.fullscreen ? "yes" : "no");
-    r = row(rows, &n, L_SPEED, ROW_CHOICE, "Speed");
-    snprintf(r->value, sizeof r->value, "%s", speed_name(cfg.speed));
-    r = row(rows, &n, L_SOUND, ROW_CHOICE, "Sound");
-    snprintf(r->value, sizeof r->value, "%s", cfg.sound ? "on" : "off");
-    r = row(rows, &n, L_AT_START, ROW_CHOICE, "This screen at start");
-    snprintf(r->value, sizeof r->value, "%s", cfg.launcher ? "yes" : "no: start the machine (F12, then Settings, brings it back)");
-
-    row(rows, &n, 0, ROW_HEADING, "");
-    r = row(rows, &n, L_FETCH, ROW_ACTION, "Fetch the ROMs");
-    if (SDL_AtomicGet(&fetch_busy) && fetch_what == FETCH_ROMS) { snprintf(r->value, sizeof r->value, "downloading ..."); r->colour = UI_ACCENT; }
-    else if (fetched_rom(SET_QL) && fetched_rom(SET_SUPERQL)) { snprintf(r->value, sizeof r->value, "both here"); r->colour = UI_GOOD; }
-    else snprintf(r->value, sizeof r->value, "Minerva and SMSQ/E, from their own projects");
-    row(rows, &n, L_START, ROW_ACTION, "Start");
-    row(rows, &n, L_QUIT, ROW_ACTION, "Quit");
-    return n;
-}
-
-static void choose_file(const char *what, char *path, size_t size);
-static void choose_folder(const char *what, char *path, size_t size);
-
-/* 1: start the machine, 0: quit */
-static int launcher(void) {
-    static ui_list list;
-    static int first = 1;
-    ui_row rows[40];
-    SDL_ShowCursor(SDL_ENABLE);
-    SDL_SetWindowTitle(win, "OpenQL");
-    if (first) {                                    /* where the eye goes first */
-        int n = launcher_rows(rows), want = !fetched_qle() && !cfg.win1[0] && cfg.machine == SET_SUPERQL ? L_QLE : L_START;
-        for (int i = 0; i < n; i++) if (rows[i].id == want) list.sel = i;
-        first = 0;
-    }
-    for (;;) {
-        fetch_done();
-        if (!ui_have_ql_font() && ui_load_ql_font(fetched_rom(SET_QL))) ui_load_ql_font(fetched_rom(SET_SUPERQL));
-        int n = launcher_rows(rows);
-        if (want_row) { for (int i = 0; i < n; i++) if (rows[i].id == want_row) list.sel = i; want_row = 0; }
-        ui_clear(UI_BG);
-        ui_text(40, 14, "OpenQL", UI_TEXT, 3);
-        ui_text(40 + ui_text_w("OpenQL", 3) + 20, 44, "a Sinclair QL or a Super QL", UI_DIM, 1);
-        ui_rect(40, 82, UI_W - 80, 4, UI_EDGE);
-        ui_list_draw(&list, rows, n, 30, 100, UI_W - 60, UI_H - 100 - 70, 300);
-        if (status[0]) ui_text_fit(40, UI_H - 64, UI_W - 80, status, status_colour);
-        ui_text(40, UI_H - 34, "Up/Down choose  Left/Right change  Enter go  Del empties  Esc quit", UI_DIM, 1);
-        present(0, 1);
-
-        SDL_Event e;
-        if (!SDL_WaitEventTimeout(&e, 100)) continue;
-        do {
-            if (e.type == SDL_QUIT) return 0;
-            if (e.type == SDL_DROPFILE) {             /* a file dropped: in where it fits */
-                const char *f = e.drop.file;
-                size_t len = strlen(f);
-                const char *ext = len > 4 ? f + len - 4 : "";
-                if (!SDL_strcasecmp(ext, ".mdv")) { cfg.machine = SET_QL; snprintf(cfg.mdv[0], SET_PATH, "%s", f); }
-                else if (!SDL_strcasecmp(ext, ".win")) { cfg.machine = SET_SUPERQL; snprintf(cfg.win1, SET_PATH, "%s", f); }
-                else { cfg.machine = SET_SUPERQL; snprintf(cfg.flp[0], SET_PATH, "%s", f); }
-                say(UI_GOOD, "%s is in", base_name(f));
-                SDL_free(e.drop.file);
-                continue;
-            }
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F11) { set_fullscreen(!cfg.fullscreen); continue; }
-            int a = ui_list_event(&list, rows, n, &e);
-            if (a == UI_NONE) continue;
-            if (a == UI_BACK) return 0;
-            int id = rows[list.sel].id, d = a == UI_LEFT ? -1 : 1, sql = cfg.machine == SET_SUPERQL;
-            switch (id) {
-            case L_MACHINE: if (a != UI_CLEAR) cfg.machine = sql ? SET_QL : SET_SUPERQL; break;
-            case L_RAM:
-                if (a == UI_CLEAR) break;
-                if (sql) cfg.ram_sql_mb = step_in(sql_rams, 4, cfg.ram_sql_mb, d);
-                else cfg.ram_ql_kb = step_in(ql_rams, 6, cfg.ram_ql_kb, d);
-                break;
-            case L_ROM: {
-                char *own = sql ? cfg.rom_sql : cfg.rom_ql;
-                if (a == UI_CLEAR) own[0] = 0;
-                else if (a == UI_ACTIVATE) choose_file(sql ? "Choose an SMSQ/E ROM (Q40)" : "Choose a QL ROM", own, SET_PATH);
-                break;
-            }
-            case L_WIN1: if (a == UI_CLEAR) cfg.win1[0] = 0; else if (a == UI_ACTIVATE) choose_file("Choose WIN1_: a QXL.WIN hard disk", cfg.win1, SET_PATH); break;
-            case L_WIN1RO: if (a != UI_CLEAR) cfg.win1_ro = !cfg.win1_ro; break;
-            case L_FLP1: case L_FLP2: {
-                char *p = cfg.flp[id - L_FLP1];
-                if (a == UI_CLEAR) p[0] = 0; else if (a == UI_ACTIVATE) choose_file(id == L_FLP1 ? "Choose FLP1_'s floppy image" : "Choose FLP2_'s floppy image", p, SET_PATH);
-                break;
-            }
-            case L_HOSTDIR:
-                if (a == UI_CLEAR) cfg.host_dir[0] = 0;
-                else if (a == UI_ACTIVATE) choose_folder("Choose a folder for FLP2_ (files written back when it comes out)", cfg.host_dir, SET_PATH);
-                break;
-            case L_MDV1: case L_MDV2: {
-                char *p = cfg.mdv[id - L_MDV1];
-                if (a == UI_CLEAR) p[0] = 0; else if (a == UI_ACTIVATE) choose_file(id == L_MDV1 ? "Choose mdv1_'s cartridge (.mdv)" : "Choose mdv2_'s cartridge (.mdv)", p, SET_PATH);
-                break;
-            }
-            case L_QLE:
-                if (a != UI_ACTIVATE) break;
-                if (fetched_qle()) { snprintf(cfg.win1, SET_PATH, "%s", fetched_qle()); cfg.win1_ro = 0; cfg.machine = SET_SUPERQL; say(UI_GOOD, "QL/E is in WIN1_: Start"); }
-                else fetch_start(FETCH_QLE);
-                break;
-            case L_SCALE: if (a != UI_CLEAR) cfg.scale = (cfg.scale + d + SCALE_MODES) % SCALE_MODES; break;
-            case L_FULL: if (a != UI_CLEAR) set_fullscreen(!cfg.fullscreen); break;
-            case L_SPEED: if (a != UI_CLEAR) cfg.speed = (cfg.speed + d + SPEEDS) % SPEEDS; break;
-            case L_SOUND: if (a != UI_CLEAR) cfg.sound = !cfg.sound; break;
-            case L_AT_START: if (a != UI_CLEAR) cfg.launcher = !cfg.launcher; break;
-            case L_FETCH: if (a == UI_ACTIVATE) fetch_start(FETCH_ROMS); break;
-            case L_START:
-                if (a != UI_ACTIVATE) break;
-                if (SDL_AtomicGet(&fetch_busy)) { say(UI_ACCENT, "still downloading: a moment"); break; }
-                settings_save(&cfg, settings_path());
-                cfg.seen = 1;
-                if (machine_start(&cfg, NULL) == 0) return 1;
-                break;
-            case L_QUIT: if (a == UI_ACTIVATE) return 0; break;
-            }
-        } while (SDL_PollEvent(&e));
-    }
-}
-
-/* The file browser over whatever is on the window, until a file is chosen or not. */
-static void browse(const char *what, char *path, size_t size, int want_dir) {
-    ui_browser *b = ui_browser_open(what, path[0] ? path : disk_dir(), want_dir);
-    if (!b) return;
-    int shown = machine_up && tex;
-    SDL_ShowCursor(SDL_ENABLE);
-    for (;;) {
-        if (!shown) ui_clear(UI_BG); else ui_clear(0);
-        ui_browser_draw(b);
-        present(shown, 1);
-        SDL_Event e;
-        if (!SDL_WaitEventTimeout(&e, 200)) continue;
-        int done = 0;
-        do {
-            if (e.type == SDL_QUIT) { SDL_PushEvent(&e); done = -1; break; }
-            if (e.type == SDL_DROPFILE) { snprintf(path, size, "%s", e.drop.file); SDL_free(e.drop.file); done = 1; break; }
-            char out[SET_PATH];
-            int r = ui_browser_event(b, &e, out, sizeof out);
-            if (r == 1) { snprintf(path, size, "%s", out); done = 1; break; }
-            if (r < 0) { done = -1; break; }
-        } while (SDL_PollEvent(&e));
-        if (done) break;
-    }
-    ui_browser_close(b);
-}
-
-static void choose_file(const char *what, char *path, size_t size) { browse(what, path, size, 0); }
-static void choose_folder(const char *what, char *path, size_t size) { browse(what, path, size, 1); }
-
-/* ---- the menu (F12) ------------------------------------------------------------------ */
-
-enum {
-    MN_RESUME = 1, MN_DISK1, MN_DISK2, MN_BLANK, MN_HOSTDIR, MN_SYNC, MN_SLOT, MN_SAVE, MN_LOAD,
-    MN_PASTE, MN_SPEED, MN_SCALE, MN_FULL, MN_RESET, MN_POWER, MN_SETTINGS, MN_QUIT,
-};
-static int slot = 1;
-
 static const char *state_file(int n) {
     static char p[SET_PATH];
     snprintf(p, sizeof p, "%s/%s-%d.state", state_dir(), machine == M_QL ? "ql" : "superql", n);
     return p;
 }
 
-static int menu_rows(ui_row *rows) {
-    int n = 0, sql = machine == M_SUPERQL;
-    ui_row *r;
-    row(rows, &n, MN_RESUME, ROW_ACTION, "Back to the machine");
-    row(rows, &n, 0, ROW_HEADING, "Disks");
-    for (int i = 0; i < 2; i++) {
-        const char *in = sql ? cfg.flp[i] : cfg.mdv[i];
-        char label[40];
-        snprintf(label, sizeof label, sql ? "FLP%d_" : "mdv%d_", i + 1);
-        r = row(rows, &n, i ? MN_DISK2 : MN_DISK1, ROW_FILE, label);
-        if (sql && i == 1 && hd_in) { snprintf(r->value, sizeof r->value, "the host folder %.200s", hd_folder); r->colour = UI_GOOD; }
-        else if (sql ? s.fdc.d[i].f != NULL : q.mdv[i].tape != NULL) snprintf(r->value, sizeof r->value, "%s", base_name(in[0] ? in : "(in)"));
-        else { snprintf(r->value, sizeof r->value, "empty: Enter chooses a %s", sql ? "floppy image" : "cartridge"); r->colour = UI_DIM; }
-    }
-    if (!sql) {
-        r = row(rows, &n, MN_BLANK, ROW_ACTION, "A new blank cartridge");
-        snprintf(r->value, sizeof r->value, "in mdv%d_, to FORMAT", !q.mdv[0].tape ? 1 : 2);
-        r->colour = UI_DIM;
-    }
-    if (sql && hd_in) {
-        r = row(rows, &n, MN_SYNC, ROW_ACTION, "Write FLP2_ to the folder now");
-        snprintf(r->value, sizeof r->value, "also when it comes out");
-        r->colour = UI_DIM;
-    } else if (sql) {
-        r = row(rows, &n, MN_HOSTDIR, ROW_ACTION, "A host folder as FLP2_");
-        snprintf(r->value, sizeof r->value, "Enter chooses one");
-        r->colour = UI_DIM;
-    }
-    if (sql) {
-        r = row(rows, &n, 0, ROW_INFO, "WIN1_");
-        snprintf(r->value, sizeof r->value, "%.250s", cfg.win1[0] ? base_name(cfg.win1) : "none (Settings)");
-    }
-    row(rows, &n, 0, ROW_HEADING, "Saved states");
-    r = row(rows, &n, MN_SLOT, ROW_CHOICE, "Slot");
-    snprintf(r->value, sizeof r->value, "%d%s", slot, file_exists(state_file(slot)) ? "" : " (empty)");
-    row(rows, &n, MN_SAVE, ROW_ACTION, "Save the machine here");
-    r = row(rows, &n, MN_LOAD, ROW_ACTION, "Load it");
-    r->disabled = !file_exists(state_file(slot));
-    row(rows, &n, 0, ROW_HEADING, "The machine");
-    r = row(rows, &n, MN_PASTE, ROW_ACTION, "Type the clipboard in");
-    snprintf(r->value, sizeof r->value, "Ctrl+Shift+V");
-    r->colour = UI_DIM;
-    r = row(rows, &n, MN_SPEED, ROW_CHOICE, "Speed");
-    snprintf(r->value, sizeof r->value, "%s", speed_name(cfg.speed));
-    r = row(rows, &n, MN_SCALE, ROW_CHOICE, "Picture");
-    snprintf(r->value, sizeof r->value, "%s", scale_name(cfg.scale));
-    r = row(rows, &n, MN_FULL, ROW_CHOICE, "Full screen");
-    snprintf(r->value, sizeof r->value, "%s", cfg.fullscreen ? "yes" : "no");
-    r = row(rows, &n, MN_RESET, ROW_ACTION, "Reset");
-    snprintf(r->value, sizeof r->value, "RAM kept (Ctrl+F12)");
-    r->colour = UI_DIM;
-    r = row(rows, &n, MN_POWER, ROW_ACTION, "Power off and on");
-    snprintf(r->value, sizeof r->value, "RAM cleared (Ctrl+Shift+F12)");
-    r->colour = UI_DIM;
-    row(rows, &n, 0, ROW_HEADING, "");
-    row(rows, &n, MN_SETTINGS, ROW_ACTION, "Settings: another machine or disks");
-    row(rows, &n, MN_QUIT, ROW_ACTION, "Quit");
-    return n;
+static void reset(int clear_ram);
+static void make_window(void);
+
+const char *app_status(int *bad) { *bad = status_colour == UI_BAD; return status; }
+void app_fetch(int qle) { fetch_start(qle ? FETCH_QLE : FETCH_ROMS); }
+int app_fetch_busy(void) { return SDL_AtomicGet(&fetch_busy); }
+int app_fetch_done(void) {
+    if (!fetch_what || SDL_AtomicGet(&fetch_busy)) return 0;
+    fetch_done();
+    return 1;
 }
 
-enum { MENU_STAY, MENU_RESUME, MENU_SETTINGS, MENU_QUIT };
+int app_start(void) {
+    if (SDL_AtomicGet(&fetch_busy)) { say(UI_ACCENT, "Still downloading: a moment."); return -1; }
+    cfg.seen = 1;
+    return machine_start(&cfg, NULL);
+}
 
-static void insert_disk(int drive, const char *path) {
+int app_is_ql(void) { return machine == M_QL; }
+int app_drive_in(int drive) { return machine == M_QL ? q.mdv[drive].tape != NULL : s.fdc.d[drive].f != NULL && !(drive == 1 && hd_in); }
+
+void app_insert(int drive, const char *path) {
     if (machine == M_SUPERQL && drive == 1 && hd_in) { hostdir_out(1); cfg.host_dir[0] = 0; }
     if (machine == M_SUPERQL) {
-        if (sql_insert_floppy(&s, drive, path, 0) == 0) { snprintf(cfg.flp[drive], SET_PATH, "%s", path); say(UI_GOOD, "%s in FLP%d_", base_name(path), drive + 1); }
-        else say(UI_BAD, "FLP%d_ cannot take %s", drive + 1, base_name(path));
+        if (sql_insert_floppy(&s, drive, path, 0) == 0) { snprintf(cfg.flp[drive], SET_PATH, "%s", path); say(UI_GOOD, "%s is in FLP%d_.", base_name(path), drive + 1); }
+        else say(UI_BAD, "FLP%d_ cannot take %s.", drive + 1, base_name(path));
     } else {
-        if (ql_mdv_insert(&q, drive, path, 0) == 0) { snprintf(cfg.mdv[drive], SET_PATH, "%s", path); say(UI_GOOD, "%s in mdv%d_", base_name(path), drive + 1); }
-        else say(UI_BAD, "mdv%d_ cannot take %s", drive + 1, base_name(path));
+        if (ql_mdv_insert(&q, drive, path, 0) == 0) { snprintf(cfg.mdv[drive], SET_PATH, "%s", path); say(UI_GOOD, "%s is in mdv%d_.", base_name(path), drive + 1); }
+        else say(UI_BAD, "mdv%d_ cannot take %s.", drive + 1, base_name(path));
     }
 }
 
-static void eject_disk(int drive) {
+void app_eject(int drive) {
     if (machine == M_SUPERQL && drive == 1 && hd_in) { hostdir_out(1); cfg.host_dir[0] = 0; return; }
     if (machine == M_SUPERQL) { sql_eject_floppy(&s, drive); cfg.flp[drive][0] = 0; }
     else { ql_mdv_eject(&q, drive); cfg.mdv[drive][0] = 0; }
-    say(UI_TEXT, "%s%d_ is empty", machine == M_SUPERQL ? "FLP" : "mdv", drive + 1);
+    say(UI_TEXT, "%s%d_ is empty.", machine == M_SUPERQL ? "FLP" : "mdv", drive + 1);
 }
 
-static void reset(int clear_ram);
-
-static int menu(void) {
-    static ui_list list;
-    ui_row rows[32];
-    list.sel = 0;
-    status[0] = 0;
-    SDL_ShowCursor(SDL_ENABLE);
-    for (;;) {
-        int n = menu_rows(rows);
-        ui_clear(0x80000000u);
-        int pw = 760, ph = 24 * n + 100, px = (UI_W - pw) / 2, py = (UI_H - ph) / 2;
-        if (py < 8) { py = 8; ph = UI_H - 16; }
-        ui_rect(px, py, pw, ph, UI_PANEL);
-        ui_frame(px, py, pw, ph, UI_EDGE);
-        ui_frame(px + 1, py + 1, pw - 2, ph - 2, UI_EDGE);
-        ui_text(px + 20, py + 14, machine == M_QL ? "Sinclair QL" : "Super QL", UI_ACCENT, 1);
-        ui_text(px + pw - 20 - ui_text_w("F12 or Esc: back", 1), py + 14, "F12 or Esc: back", UI_DIM, 1);
-        ui_list_draw(&list, rows, n, px + 10, py + 46, pw - 20, ph - 86, 330);
-        if (status[0]) ui_text_fit(px + 20, py + ph - 32, pw - 40, status, status_colour);
-        present(1, 1);
-        SDL_Event e;
-        if (!SDL_WaitEventTimeout(&e, 100)) continue;
-        do {
-            if (e.type == SDL_QUIT) return MENU_QUIT;
-            if (e.type == SDL_KEYDOWN && (e.key.keysym.sym == SDLK_F12 || e.key.keysym.sym == SDLK_ESCAPE)) return MENU_RESUME;
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F11) { set_fullscreen(!cfg.fullscreen); continue; }
-            if (e.type == SDL_DROPFILE) { insert_disk((SDL_GetModState() & KMOD_SHIFT) ? 1 : 0, e.drop.file); SDL_free(e.drop.file); continue; }
-            int a = ui_list_event(&list, rows, n, &e);
-            if (a == UI_NONE) continue;
-            if (a == UI_BACK) return MENU_RESUME;
-            int id = rows[list.sel].id, d = a == UI_LEFT ? -1 : 1;
-            const char *why = "";
-            switch (id) {
-            case MN_RESUME: if (a == UI_ACTIVATE) return MENU_RESUME; break;
-            case MN_DISK1: case MN_DISK2: {
-                int drive = id - MN_DISK1;
-                if (a == UI_CLEAR) { eject_disk(drive); break; }
-                if (a != UI_ACTIVATE) break;
-                char p[SET_PATH];
-                snprintf(p, sizeof p, "%s", machine == M_SUPERQL ? cfg.flp[drive] : cfg.mdv[drive]);
-                if (!p[0]) snprintf(p, sizeof p, "%s", disk_dir());
-                char was[SET_PATH];
-                snprintf(was, sizeof was, "%s", p);
-                choose_file(machine == M_SUPERQL ? "Choose a floppy image" : "Choose a cartridge (.mdv)", p, sizeof p);
-                if (strcmp(p, was) || file_exists(p)) insert_disk(drive, p);
-                break;
-            }
-            case MN_BLANK: {
-                if (a != UI_ACTIVATE) break;
-                char p[SET_PATH];
-                make_dirs(disk_dir());
-                for (int k = 1; k < 1000; k++) {
-                    snprintf(p, sizeof p, "%s/cartridge-%d.mdv", disk_dir(), k);
-                    if (!file_exists(p)) break;
-                }
-                insert_disk(!q.mdv[0].tape ? 0 : 1, p);   /* written when the drive stops */
-                break;
-            }
-            case MN_HOSTDIR: {
-                if (a != UI_ACTIVATE) break;
-                char p[SET_PATH];
-                snprintf(p, sizeof p, "%s", cfg.host_dir);
-                choose_folder("Choose a folder for FLP2_ (files written back when it comes out)", p, sizeof p);
-                if (!p[0]) break;
-                if (s.fdc.d[1].f) eject_disk(1);
-                if (hostdir_in(p) == 0) {
-                    snprintf(cfg.host_dir, SET_PATH, "%s", p);
-                    if (status_colour != UI_ACCENT) say(UI_GOOD, "%s is FLP2_", p);
-                }
-                break;
-            }
-            case MN_SYNC: if (a == UI_ACTIVATE) hostdir_out(0); break;
-            case MN_SLOT: if (a != UI_CLEAR) slot = (slot - 1 + d + 4) % 4 + 1; break;
-            case MN_SAVE:
-                if (a != UI_ACTIVATE) break;
-                if ((machine == M_QL ? ql_save_state(&q, state_file(slot), &why) : sql_save_state(&s, state_file(slot), &why)) == 0)
-                    say(UI_GOOD, "saved in slot %d", slot);
-                else say(UI_BAD, "not saved: %s", why);
-                break;
-            case MN_LOAD:
-                if (a != UI_ACTIVATE) break;
-                if ((machine == M_QL ? ql_load_state(&q, state_file(slot), &why) : sql_load_state(&s, state_file(slot), &why)) == 0) {
-                    mod_shift = mod_ctrl = mod_alt = 0;
-                    say(UI_GOOD, "slot %d loaded", slot);
-                    return MENU_RESUME;
-                }
-                say(UI_BAD, "not loaded: %s", why);
-                break;
-            case MN_PASTE: if (a == UI_ACTIVATE) { paste_start(); return MENU_RESUME; } break;
-            case MN_SPEED: if (a != UI_CLEAR) cfg.speed = (cfg.speed + d + SPEEDS) % SPEEDS; break;
-            case MN_SCALE: if (a != UI_CLEAR) cfg.scale = (cfg.scale + d + SCALE_MODES) % SCALE_MODES; break;
-            case MN_FULL: if (a != UI_CLEAR) set_fullscreen(!cfg.fullscreen); break;
-            case MN_RESET: if (a == UI_ACTIVATE) { reset(0); return MENU_RESUME; } break;
-            case MN_POWER: if (a == UI_ACTIVATE) { reset(1); return MENU_RESUME; } break;
-            case MN_SETTINGS: if (a == UI_ACTIVATE) return MENU_SETTINGS; break;
-            case MN_QUIT: if (a == UI_ACTIVATE) return MENU_QUIT; break;
-            }
-        } while (SDL_PollEvent(&e));
+void app_blank_cartridge(void) {
+    char p[SET_PATH];
+    make_dirs(disk_dir());
+    for (int k = 1; k < 1000; k++) {
+        snprintf(p, sizeof p, "%s/cartridge-%d.mdv", disk_dir(), k);
+        if (!file_exists(p)) break;
     }
+    app_insert(!q.mdv[0].tape ? 0 : 1, p);   /* written when the drive stops */
+}
+
+int app_hostdir_in(void) { return hd_in; }
+void app_hostdir_insert(const char *folder) {
+    if (s.fdc.d[1].f) app_eject(1);
+    if (hostdir_in(folder) == 0) {
+        snprintf(cfg.host_dir, SET_PATH, "%s", folder);
+        if (status_colour != UI_ACCENT) say(UI_GOOD, "%s is FLP2_.", folder);
+    }
+}
+void app_hostdir_write(void) { hostdir_out(0); }
+
+int app_state(int save, int slot) {
+    const char *why = "";
+    int rc = save ? (machine == M_QL ? ql_save_state(&q, state_file(slot), &why) : sql_save_state(&s, state_file(slot), &why))
+                  : (machine == M_QL ? ql_load_state(&q, state_file(slot), &why) : sql_load_state(&s, state_file(slot), &why));
+    if (rc) say(UI_BAD, "Not %s: %s.", save ? "saved" : "loaded", why);
+    else {
+        if (!save) mod_shift = mod_ctrl = mod_alt = 0;
+        say(UI_GOOD, save ? "Saved in slot %d." : "Slot %d loaded.", slot);
+    }
+    return rc;
+}
+int app_state_exists(int slot) { return file_exists(state_file(slot)); }
+void app_paste(void) { paste_start(); }
+void app_reset(int power) { reset(power); }
+void app_fullscreen(int on) { set_fullscreen(on); }
+void app_redraw(void) { present(); }
+
+/* While the menu is open: the machine's window still answers. */
+int app_quit_asked(void) {
+    SDL_PumpEvents();
+    SDL_Event e;
+    return SDL_PeepEvents(&e, 1, SDL_GETEVENT, SDL_QUIT, SDL_QUIT) > 0;
+}
+
+int app_menu_key(void) {
+    SDL_Event e;
+    int r = 0;
+    while (SDL_PollEvent(&e)) {
+        if (e.type == SDL_QUIT) r = 2;
+        else if (e.type == SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym == SDLK_F12 || e.key.keysym.sym == SDLK_ESCAPE) && !r) r = 1;
+    }
+    SDL_Delay(15);
+    return r;
 }
 
 /* ---- the machine in the window -------------------------------------------------------- */
 
 enum { RUN_QUIT, RUN_SETTINGS };
 
+static int gui_ok;                     /* the launcher and the menu can be shown */
+
+/* The machine's window, made the first time and shown again after the launcher. */
+static void make_window(void) {
+    if (!win) {
+        /* A QL drew its picture on a 4:3 television or monitor, whatever its mode. */
+        win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1024, 768,
+                               SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (cfg.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
+        if (!win) { fprintf(stderr, "openql: %s\n", SDL_GetError()); exit(1); }
+        ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
+        if (!ren) { fprintf(stderr, "openql: %s\n", SDL_GetError()); exit(1); }
+    } else {
+        SDL_SetWindowFullscreen(win, cfg.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+        SDL_ShowWindow(win);
+        SDL_RaiseWindow(win);
+    }
+    int w = pic_w(), h = pic_h();
+    if (!tex || w != tex_w || h != tex_h) {
+        if (tex) SDL_DestroyTexture(tex);
+        tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+        tex_w = w; tex_h = h;
+    }
+    SDL_SetWindowTitle(win, title);
+}
+
 static int run_window(void) {
+    make_window();
     int w = pic_w(), h = pic_h();
     SDL_ShowCursor(machine == M_SUPERQL ? SDL_DISABLE : SDL_ENABLE);   /* SMSQ/E draws its own */
     int paused = 0, warp = 0;
@@ -1179,12 +870,12 @@ static int run_window(void) {
                         if (ctrl) {
                             reset(shift);
                             fprintf(stderr, "openql: %s\n", shift ? "power cycle (RAM cleared)" : "reset (RAM kept)");
-                        } else open_menu = 1;
+                        } else open_menu = gui_ok;
                     }
                     break;
                 }
                 if (sc == SDL_SCANCODE_F9 && ctrl) {
-                    if (down && !e.key.repeat) eject_disk(shift ? 1 : 0);
+                    if (down && !e.key.repeat) app_eject(shift ? 1 : 0);
                     break;
                 }
                 if (sc == SDL_SCANCODE_F10 && ctrl) {
@@ -1218,7 +909,7 @@ static int run_window(void) {
                 }
                 break;
             case SDL_DROPFILE:
-                insert_disk((SDL_GetModState() & KMOD_SHIFT) ? 1 : 0, e.drop.file);
+                app_insert((SDL_GetModState() & KMOD_SHIFT) ? 1 : 0, e.drop.file);
                 SDL_free(e.drop.file);
                 break;
             case SDL_WINDOWEVENT:
@@ -1231,10 +922,16 @@ static int run_window(void) {
             /* the keys held when the menu opened would stay down: let them go */
             for (int k = 0; k < 0x68; k++) if (k < 0x60 || k > 0x67) raw_key((uint8_t)(k | 0x80));
             raw_key(0x60 | 0x80); raw_key(0x61 | 0x80); raw_key(0x63 | 0x80); raw_key(0x64 | 0x80); raw_key(0x65 | 0x80);
-            int m = menu();
+            int was_full = cfg.fullscreen;
+            if (was_full) SDL_SetWindowFullscreen(win, 0);    /* the menu's window over a full screen would hide */
+            present();
+            status[0] = 0;
+            int m = gui_menu(&cfg);
             if (use_launcher) settings_save(&cfg, settings_path());
-            if (m == MENU_QUIT) return RUN_QUIT;
-            if (m == MENU_SETTINGS) return RUN_SETTINGS;
+            if (m == GUI_QUIT) return RUN_QUIT;
+            if (m == GUI_SETTINGS) return RUN_SETTINGS;
+            if (cfg.fullscreen || was_full) set_fullscreen(cfg.fullscreen);
+            SDL_RaiseWindow(win);
             SDL_ShowCursor(machine == M_SUPERQL ? SDL_DISABLE : SDL_ENABLE);
             aim_x = aim_y = -1;
             next = SDL_GetPerformanceCounter();
@@ -1259,7 +956,7 @@ static int run_window(void) {
             render(pic);
             SDL_UpdateTexture(tex, NULL, pic, w * 4);
         }
-        present(1, 0);
+        present();
         next += frame;
         uint64_t t = SDL_GetPerformanceCounter();
         if (next + freq / 4 < t) next = t;   /* fell behind (a stall): start again from now */
@@ -1380,6 +1077,13 @@ int main(int argc, char **argv) {
         return rc;
     }
 
+    /* the host's controls first: on macOS, libui wants to make the application itself */
+    char why[300] = "";
+    gui_ok = gui_init(why, sizeof why) == 0;
+    if (!gui_ok) {
+        fprintf(stderr, "openql: no launcher or menu: %s\n", why);
+        if (use_launcher) { fprintf(stderr, "openql: give a machine on the command line (-M ql or -M superql)\n"); return 1; }
+    }
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) { fprintf(stderr, "openql: %s\n", SDL_GetError()); return 1; }
     if (SDL_InitSubSystem(SDL_INIT_AUDIO) == 0) {
         SDL_AudioSpec want = { 0 }, have;
@@ -1390,16 +1094,6 @@ int main(int argc, char **argv) {
     }
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-    /* A QL drew its picture on a 4:3 television or monitor, whatever its mode. */
-    win = SDL_CreateWindow("OpenQL", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1024, 768,
-                           SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (cfg.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
-    if (!win) { fprintf(stderr, "openql: %s\n", SDL_GetError()); return 1; }
-    ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
-    if (!ren) { fprintf(stderr, "openql: %s\n", SDL_GetError()); return 1; }
-    uitex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, UI_W, UI_H);
-    if (!uitex) { fprintf(stderr, "openql: %s\n", SDL_GetError()); return 1; }
-    SDL_SetTextureBlendMode(uitex, SDL_BLENDMODE_BLEND);
 
     int rc = 0;
     if (!use_launcher) {
@@ -1413,7 +1107,9 @@ int main(int argc, char **argv) {
         cfg = saved;
         cfg.scale = keep.scale; cfg.fullscreen = keep.fullscreen; cfg.speed = keep.speed;
     }
-    while (launcher()) {
+    for (;;) {
+        if (win) SDL_HideWindow(win);
+        if (!gui_launcher(&cfg)) break;
         if (run_window() == RUN_QUIT) break;
     }
     if (use_launcher) settings_save(&cfg, settings_path());
@@ -1423,10 +1119,10 @@ out:
     if (audio) SDL_CloseAudioDevice(audio);
     if (astream) SDL_FreeAudioStream(astream);
     if (tex) SDL_DestroyTexture(tex);
-    SDL_DestroyTexture(uitex);
-    SDL_DestroyRenderer(ren);
-    SDL_DestroyWindow(win);
+    if (ren) SDL_DestroyRenderer(ren);
+    if (win) SDL_DestroyWindow(win);
     SDL_Quit();
+    if (gui_ok) gui_quit();
     free(pic);
     return rc;
 }

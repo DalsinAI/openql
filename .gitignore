@@ -9,3 +9,4 @@ __pycache__/
 *.win
 /tests/settings_test
 /tests/hostdir_test
+/build/
