@@ -31,6 +31,14 @@ jobs:
           python3 -I tests/boot_check.py "$RUNNER_TEMP/f1f2.ppm" ff0000 1000
           ./qlrun -s 12 -m 640 -p "$RUNNER_TEMP/sb" -i key:f1@3 -i 'type:PRINT 6*7\n@6' "$OPENQL_ROMS/minerva-1.98j4.rom" > /dev/null
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sb-011.ppm" ff0000 40000
+      - name: Minerva formats a microdrive, saves a program, and loads and runs it again
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          m="$RUNNER_TEMP/case.mdv"
+          ./openql -M ql -d "$m" -H 70 -i key:f1@3 -i 'type:FORMAT mdv1_CASE\n@8' -i 'type:10 PRINT 6*7\n@48' -i 'type:SAVE mdv1_HELLO\n@52'
+          test "$(wc -c < "$m")" -eq 174930
+          ./openql -M ql -d "$m" -H 40 -i key:f1@3 -i 'type:LOAD mdv1_HELLO\n@8' -i 'type:RUN\n@30' -o "$RUNNER_TEMP/mdv.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/mdv.ppm" ffffff 20 258,1,290,12   # the 42, in #1
       - name: SMSQ/E boots on the Super QL, and SuperBASIC answers
         run: |
           export OPENQL_ROMS="$RUNNER_TEMP/roms"

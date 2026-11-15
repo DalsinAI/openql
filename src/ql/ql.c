@@ -6,11 +6,11 @@
  * register notes QDOS and Minerva's sources publish). No other emulator's
  * code is in it.
  *
- * Microdrives and the network are not fitted. A selected drive is an empty
- * one: its motor runs, the gap signal stays on and a gap interrupt comes each
- * 40 ms, so QDOS finds no sector header, says "not found" and stops the
- * drive, as a QL with no cartridge in does. ser1's output is kept;
- * nothing comes in on the serial ports yet.
+ * Microdrives (mdv.c) take cartridge images. A selected drive with no
+ * cartridge: its motor runs, the gap signal stays on and a gap interrupt
+ * comes each 40 ms, so QDOS finds no sector header, says "not found" and
+ * stops the drive, as a QL with no cartridge in does. The network is not
+ * fitted. ser1's output is kept; nothing comes in on the serial ports yet.
  */
 #define _POSIX_C_SOURCE 199309L
 #include "ql.h"
@@ -228,13 +228,19 @@ static uint8_t io_read8(ql *q, uint32_t a) {
         return (uint8_t)(pc_clock(q) >> (8 * (3 - (a & 3))));
     case 0x20: {                            /* pc_ipcrd */
         tx_poll(q);
-        uint8_t v = 0x08;                   /* gap: no tape passes the head */
+        ql_mdv_advance(q);
+        uint8_t v = 0;
+        if (ql_mdv_gap(q)) v |= 0x08;       /* gap: no signal passes the head */
+        if (q->mdv_rxrd) v |= 0x04;         /* a byte read from the tape */
         if (q->ipc.out_bit) v |= 0x80;      /* bit 6 clear: the IPC has the bit already */
-        if (q->tx_done) v |= 0x02;          /* transmit buffer full */
+        if ((q->tctrl & 0x18) == 0x10 ? q->mdv_txfl : q->tx_done != 0) v |= 0x02;   /* transmit buffer full */
+        update_irq(q);
         return v;
     }
     case 0x21: {                            /* pc_intr */
         tx_poll(q);
+        ql_mdv_advance(q);
+        update_irq(q);
         uint64_t c = q->cpu.clock;
         uint8_t v = q->intr_pending & 0x1f;
         if (!q->mdv_sel) v |= 0x40;
@@ -242,8 +248,10 @@ static uint8_t io_read8(ql *q, uint32_t a) {
         if ((c * baud_of(q->tctrl) * 2 / QL_CLOCK_HZ) & 1) v |= 0x80;
         return v;
     }
-    default:                                /* pc_trak1, pc_trak2: no drive data */
-        return 0;
+    default:                                /* pc_trak1, pc_trak2: the byte read from the tape */
+        ql_mdv_advance(q);
+        q->mdv_rxrd = 0;
+        return q->mdv_rx;
     }
 }
 
@@ -266,17 +274,29 @@ static void io_write8(ql *q, uint32_t a, uint8_t v) {
         ipc_write(q, v);
         break;
     case 0x20: {                            /* pc_mctrl: the select chain clocks on sclk falling */
+        ql_mdv_advance(q);
         if ((q->mctrl & 2) && !(v & 2)) q->mdv_sel = (uint8_t)(q->mdv_sel << 1 | (v & 1));
         q->mctrl = v;
+        ql_mdv_select(q);
+        ql_mdv_control(q, v);
         break;
     }
-    case 0x21:                              /* clear interrupts, set masks */
+    case 0x21: {                            /* clear interrupts, set masks */
+        ql_mdv_advance(q);
+        int gap_on = (v & 0x20) && !(q->intr_mask & 0x20);
         q->intr_pending &= (uint8_t)~(v & 0x1f);
         q->intr_mask = v & 0xe0;
+        /* the gap interrupt enabled while a cartridge's gap passes: it comes now */
+        if (gap_on && q->mdv_run >= 0 && q->mdv[q->mdv_run].tape && ql_mdv_gap(q)) q->intr_pending |= 0x01;
         update_irq(q);
         break;
+    }
     case 0x22:                              /* pc_tdata */
-        if (!(q->tctrl & 0x10)) {           /* serial: ser1 or ser2 by bit 3 */
+        if ((q->tctrl & 0x18) == 0x10) {    /* microdrive: the next byte to write */
+            ql_mdv_advance(q);
+            q->mdv_tx = v;
+            q->mdv_txfl = 1;
+        } else if (!(q->tctrl & 0x10)) {    /* serial: ser1 or ser2 by bit 3 */
             int port = q->tctrl >> 3 & 1;
             if (q->ser_out) q->ser_out(q->ser_opaque, port, v);
             else if (!port && q->serial) { fputc(v, q->serial); fflush(q->serial); }
@@ -346,6 +366,7 @@ int ql_init(ql *q, const char *rom_path, const char *cart_path, uint32_t ram_kib
     }
     ac090_reset(c);
     q->next_frame = QL_FRAME_CLOCKS;
+    q->mdv_run = -1;
     return 0;
 }
 
@@ -353,6 +374,8 @@ void ql_reset(ql *q, int clear_ram) {
     if (clear_ram) memset(q->ram, 0, QL_MAX_RAM);
     q->intr_pending = q->intr_mask = q->tctrl = q->mctrl = q->mdv_sel = q->mc_stat = 0;
     q->tx_done = 0;
+    ql_mdv_select(q);                       /* the drives stop; their cartridges stay in */
+    q->mdv_rxrd = q->mdv_txfl = q->mdv_sync = 0;
     uint64_t held = q->ipc.held;
     int s = q->ipc.shift, c = q->ipc.ctrl, a = q->ipc.alt;
     memset(&q->ipc, 0, sizeof q->ipc);
@@ -363,6 +386,7 @@ void ql_reset(ql *q, int clear_ram) {
 }
 
 void ql_free(ql *q) {
+    for (int i = 0; i < QL_MDV_DRIVES; i++) ql_mdv_eject(q, i);
     free(q->ram);
     q->ram = NULL;
 }
@@ -373,15 +397,18 @@ uint64_t ql_run(ql *q, uint64_t until) {
     while (c->clock < until && !c->halted) {
         uint64_t next = q->next_frame;
         if (q->tx_done && q->tx_done < next) next = q->tx_done;
+        uint64_t tape = ql_mdv_next(q);
+        if (tape < next) next = tape;
         if (until < next) next = until;
         update_irq(q);
         if (next > c->clock) ac090_run(c, next - c->clock);
         tx_poll(q);
+        ql_mdv_advance(q);
         while (c->clock >= q->next_frame) {
             q->next_frame += QL_FRAME_CLOCKS;
             q->frames++;
             q->intr_pending |= 0x08;        /* the frame interrupt */
-            if (q->mdv_sel && !(q->frames & 1)) q->intr_pending |= 0x01;   /* an empty drive's gap */
+            if (q->mdv_run >= 0 && !q->mdv[q->mdv_run].tape && !(q->frames & 1)) q->intr_pending |= 0x01;   /* an empty drive's gap */
             update_irq(q);
         }
         if (q->ipc.sound_on && c->clock >= q->ipc.sound_until) q->ipc.sound_on = 0;

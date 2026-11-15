@@ -12,9 +12,11 @@ No ROM is included. Fetch them on request with `openql-fetch-roms minerva` and `
 | `openql-windows-x86_64.zip` | Windows 10 and 11, x86-64 (SDL2 included) |
 | `openql-macos-x86_64.tar.gz` | macOS on Intel, and Apple silicon through Rosetta (SDL2 included; the first time, right-click and Open) |
 
-Not yet: the QL's microdrives, the network, serial input, the floppy controller's interrupt.
+Not yet: the network, serial input, the floppy controller's interrupt.
 
 New since v0.1.0:
+
+- **Microdrives on the QL**: `-d FILE` puts a `.mdv` cartridge image in mdv1_ (a second `-d`: mdv2_), or drop one on the window. QDOS's own microdrive code reads, writes and FORMATs it through the ZX8302, at the tape's real speed. A new file is a blank cartridge.
 
 - AC090's interpreter runs plain instructions without its per-step checks: the same frames, faster.
 - `openql -H` takes `-i key:NAME@T` and `-i type:TEXT@T`, so both machines can be driven without a window. CI now boots SMSQ/E and checks that SuperBASIC answers, as it does for Minerva.

@@ -11,7 +11,7 @@ PREFIX  ?= /usr/local
 
 CPU     = src/cpu/ac090.c
 CPU_DEP = $(CPU) src/cpu/ac090.h src/cpu/ac090_mmu.c src/cpu/ac090_fpu.c src/cpu/fpu_special.h
-QL      = src/ql/ql.c
+QL      = src/ql/ql.c src/ql/mdv.c
 SQL     = src/superql/superql.c src/superql/fdc.c
 
 all: openql

@@ -2,7 +2,7 @@
  * openql: a Sinclair QL or a Super QL in one window, as a single program.
  *
  *   openql [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]]
- *          [-c CART] [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-q]
+ *          [-d MDV [-d MDV]] [-c CART] [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-q]
  *          [-H SECONDS [-o FRAME.ppm] [-i INPUT]...]
  *
  *   -M  the machine: ql (a 68008 QL, Minerva) or superql (the default: a
@@ -15,6 +15,9 @@
  *   -w  WIN1 on the Super QL: a QXL.WIN file is a whole QL hard disk (-R: read only)
  *   -f  a floppy image in the Super QL's FLP1_ (a second -f: FLP2_): a raw QL
  *       floppy, 720 KB, 1.44 MB or 2.88 MB (a read-only file is write protected)
+ *   -d  a microdrive cartridge image in the QL's mdv1_ (a second -d: mdv2_):
+ *       255 sectors of 686 bytes (QLAY, MiSTer); a new or empty file is a
+ *       blank cartridge to FORMAT; a read-only file has its tab out
  *   -c  a 16 KB ROM cartridge for the QL's ROM port
  *   -p  the Super QL's LPT1 output goes to this file
  *   -s  ser1's (COM1's) output goes to this file
@@ -27,8 +30,9 @@
  *
  * In the window: F11 full screen, Ctrl+F12 the reset button (RAM kept),
  * Ctrl+Shift+F12 a power cycle, Ctrl+F10 pause, Ctrl+F9 takes the disk out
- * of FLP1_ (Ctrl+Shift+F9: FLP2_). A file dropped on the window goes into
- * FLP1_ (FLP2_ with Shift held). On the Super QL the host's pointer over the
+ * of FLP1_ or the cartridge out of mdv1_ (Ctrl+Shift+F9: FLP2_, mdv2_). A
+ * file dropped on the window goes into FLP1_ or mdv1_ (FLP2_, mdv2_ with
+ * Shift held). On the Super QL the host's pointer over the
  * window moves SMSQ/E's pointer through the serial mouse.
  *
  * The machine keeps pace with real time: one 50 Hz frame of CPU clocks each
@@ -365,15 +369,15 @@ static void inputs_at(double now) {
 
 static void usage(void) {
     fprintf(stderr, "usage: openql [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]]\n"
-                    "              [-c CART] [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-q]\n"
+                    "              [-d MDV [-d MDV]] [-c CART] [-p PRINTER-FILE] [-s SERIAL-FILE] [-F] [-q]\n"
                     "              [-H SECONDS [-o FRAME.ppm] [-i key:NAME@T | -i type:TEXT@T]...]\n");
 }
 
 int main(int argc, char **argv) {
-    const char *rom = NULL, *win1 = NULL, *cart = NULL, *prn = NULL, *ser = NULL, *dump = NULL, *flp[2] = { NULL, NULL };
-    int ram = -1, ro = 0, full = 0, quiet = 0, nflp = 0, opt;
+    const char *rom = NULL, *win1 = NULL, *cart = NULL, *prn = NULL, *ser = NULL, *dump = NULL, *flp[2] = { NULL, NULL }, *mdv[2] = { NULL, NULL };
+    int ram = -1, ro = 0, full = 0, quiet = 0, nflp = 0, nmdv = 0, opt;
     double headless = 0;
-    while ((opt = getopt(argc, argv, "M:r:m:w:Rf:c:p:s:FqH:o:i:h")) != -1) {
+    while ((opt = getopt(argc, argv, "M:r:m:w:Rf:d:c:p:s:FqH:o:i:h")) != -1) {
         switch (opt) {
         case 'M':
             if (!strcmp(optarg, "ql")) machine = M_QL;
@@ -391,6 +395,7 @@ int main(int argc, char **argv) {
         case 'w': win1 = optarg; break;
         case 'R': ro = 1; break;
         case 'f': if (nflp < 2) flp[nflp++] = optarg; break;
+        case 'd': if (nmdv < 2) mdv[nmdv++] = optarg; break;
         case 'q': quiet = 1; break;
         case 'c': cart = optarg; break;
         case 'p': prn = optarg; break;
@@ -421,10 +426,12 @@ int main(int argc, char **argv) {
     if (machine == M_QL) {
         if (win1 || nflp) fprintf(stderr, "openql: the QL has no disks yet; -w and -f are for the Super QL\n");
         if (ql_init(&q, rom, cart, (uint32_t)(ram > 0 ? ram : 640))) return 1;
+        for (int i = 0; i < nmdv; i++) if (ql_mdv_insert(&q, i, mdv[i], 0)) return 1;
         q.ser_out = serial_out;
         title = "OpenQL · Sinclair QL";
         fprintf(stderr, "openql: Sinclair QL, 68008 at 7.5 MHz, %u KB RAM, ROM %s\n", q.ram_bytes >> 10, rom);
     } else {
+        if (nmdv) fprintf(stderr, "openql: the Super QL has no microdrives; -d is for the QL\n");
         if (sql_init(&s, rom, (uint32_t)(ram > 0 ? ram : (int)SQL_MAX_RAM_MB))) return 1;
         if (win1 && sql_attach_disk(&s, win1, ro)) return 1;
         for (int i = 0; i < nflp; i++) if (sql_insert_floppy(&s, i, flp[i], 0)) return 1;
@@ -499,10 +506,11 @@ int main(int argc, char **argv) {
                     break;
                 }
                 if (sc == SDL_SCANCODE_F9 && ctrl) {
-                    if (down && !e.key.repeat && machine == M_SUPERQL) {
+                    if (down && !e.key.repeat) {
                         int drive = (e.key.keysym.mod & KMOD_SHIFT) ? 1 : 0;
-                        sql_eject_floppy(&s, drive);
-                        fprintf(stderr, "openql: FLP%d_ is empty\n", drive + 1);
+                        if (machine == M_SUPERQL) sql_eject_floppy(&s, drive);
+                        else ql_mdv_eject(&q, drive);
+                        fprintf(stderr, "openql: %s%d_ is empty\n", machine == M_SUPERQL ? "FLP" : "mdv", drive + 1);
                     }
                     break;
                 }
@@ -528,10 +536,11 @@ int main(int argc, char **argv) {
                 }
                 break;
             case SDL_DROPFILE:
-                if (machine == M_SUPERQL) {
+                {
                     int drive = (SDL_GetModState() & KMOD_SHIFT) ? 1 : 0;
-                    if (sql_insert_floppy(&s, drive, e.drop.file, 0) == 0)
-                        fprintf(stderr, "openql: %s in FLP%d_\n", e.drop.file, drive + 1);
+                    if (machine == M_SUPERQL ? sql_insert_floppy(&s, drive, e.drop.file, 0) == 0
+                                             : ql_mdv_insert(&q, drive, e.drop.file, 0) == 0)
+                        fprintf(stderr, "openql: %s in %s%d_\n", e.drop.file, machine == M_SUPERQL ? "FLP" : "mdv", drive + 1);
                 }
                 SDL_free(e.drop.file);
                 break;
