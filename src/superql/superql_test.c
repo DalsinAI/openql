@@ -251,6 +251,52 @@ int main(void) {
         CHECK(rd(&s, ISA(0x3f4), 1) == 0xd0 && rd(&s, ISA(0x3f5), 1) == 0x90, "VERSION through the ISA ports");
     }
 
+    /* its interrupt: IRQ 6 in the external interrupt register, on level 2 once enabled */
+    {
+        wr(&s, ISA(0x3f2), 0x18, 1);                 /* into reset, the DMA/IRQ gate on */
+        wr(&s, ISA(0x3f2), 0x1c, 1);                 /* out: the reset's interrupt */
+        CHECK(rd(&s, 0xff000004, 1) & 0x08, "IRQ 6 after a reset (eir %02x)", rd(&s, 0xff000004, 1));
+        CHECK(!(rd(&s, 0xff000000, 1) & 0x10), "no external interrupt while it is not enabled");
+        wr(&s, 0xff000010, 1, 1);
+        CHECK((rd(&s, 0xff000000, 1) & 0x10) && s.cpu.irq == 2, "enabled: the external interrupt, level 2 (irq %d)", s.cpu.irq);
+        for (int i = 0; i < 4; i++) { wr(&s, ISA(0x3f5), 0x08, 1); rd(&s, ISA(0x3f5), 1); rd(&s, ISA(0x3f5), 1); }   /* SENSE INTERRUPT for each drive */
+        CHECK(!(rd(&s, 0xff000004, 1) & 0x08), "sensed: IRQ 6 drops");
+        wr(&s, ISA(0x3f5), 0x07, 1); wr(&s, ISA(0x3f5), 0x00, 1);   /* RECALIBRATE drive 0 */
+        CHECK(rd(&s, 0xff000004, 1) & 0x08, "a seek's end raises IRQ 6");
+        wr(&s, ISA(0x3f5), 0x08, 1);
+        CHECK(rd(&s, ISA(0x3f5), 1) == 0x20 && rd(&s, ISA(0x3f5), 1) == 0, "SENSE INTERRUPT: seek end, track 0");
+        CHECK(!(rd(&s, 0xff000004, 1) & 0x08), "and it drops (eir %02x)", rd(&s, 0xff000004, 1));
+        wr(&s, 0xff000010, 0, 1);
+    }
+
+    /* serial input on COM1: taken once a channel is open (receive interrupt on, DTR and OUT2) */
+    {
+        wr(&s, ISA(0x3f8 + 1), 0x00, 1);
+        wr(&s, ISA(0x3f8 + 4), 0x08, 1);
+        CHECK(sql_serial_space(&s, 0) == 0, "COM1 not open: no room");
+        wr(&s, ISA(0x3f8 + 1), 0x01, 1);
+        wr(&s, ISA(0x3f8 + 4), 0x0b, 1);
+        CHECK(sql_serial_space(&s, 0) > 0, "open: room (%d)", sql_serial_space(&s, 0));
+        sql_serial_in(&s, 0, 'Q');
+        CHECK((rd(&s, ISA(0x3f8 + 5), 1) & 1) && rd(&s, ISA(0x3f8), 1) == 'Q', "the byte in COM1's receive FIFO");
+        CHECK(sql_serial_space(&s, 1) == 0, "COM2 is the mouse's");
+    }
+
+    /* a saved state: the same machine, run on from it, does the same again */
+    {
+        const char *st = "superql_test_state.bin", *why = "";
+        wr(&s, 0x100000, 0x4242, 2);
+        CHECK(sql_save_state(&s, st, &why) == 0, "save a state (%s)", why);
+        sql_run(&s, s.cpu.clock + SQL_FRAME_CLOCKS * 3);
+        uint32_t t1 = rd(&s, 0x28100, 4), pc1 = s.cpu.pc; uint64_t clk1 = s.cpu.clock;
+        wr(&s, 0x100000, 0x1111, 2);
+        CHECK(sql_load_state(&s, st, &why) == 0, "load it (%s)", why);
+        CHECK(rd(&s, 0x100000, 2) == 0x4242, "RAM as it was");
+        sql_run(&s, s.cpu.clock + SQL_FRAME_CLOCKS * 3);
+        CHECK(rd(&s, 0x28100, 4) == t1 && s.cpu.pc == pc1 && s.cpu.clock == clk1, "ran on the same (ticks %u %u)", rd(&s, 0x28100, 4), t1);
+        remove(st);
+    }
+
     sql_free(&s);
     remove(rom); remove(disk);
     printf("%s (%d failed)\n", fails ? "FAIL" : "ok", fails);

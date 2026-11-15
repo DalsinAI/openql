@@ -17,8 +17,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Install SDL2
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsdl2-dev
+      - name: Install SDL2, and GTK 3 and meson for libui-ng
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsdl2-dev libgtk-3-dev meson ninja-build
       - name: Build
         run: make openql qlrun
       - name: The boards' cases and the fetcher's
@@ -31,6 +31,24 @@ jobs:
           python3 -I tests/boot_check.py "$RUNNER_TEMP/f1f2.ppm" ff0000 1000
           ./qlrun -s 12 -m 640 -p "$RUNNER_TEMP/sb" -i key:f1@3 -i 'type:PRINT 6*7\n@6' "$OPENQL_ROMS/minerva-1.98j4.rom" > /dev/null
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sb-011.ppm" ff0000 40000
+      - name: Minerva formats a microdrive, saves a program, and loads and runs it again
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          m="$RUNNER_TEMP/case.mdv"
+          ./openql -M ql -d "$m" -H 70 -i key:f1@3 -i 'type:FORMAT mdv1_CASE\n@8' -i 'type:10 PRINT 6*7\n@48' -i 'type:SAVE mdv1_HELLO\n@52'
+          test "$(wc -c < "$m")" -eq 174930
+          ./openql -M ql -d "$m" -H 40 -i key:f1@3 -i 'type:LOAD mdv1_HELLO\n@8' -i 'type:RUN\n@30' -o "$RUNNER_TEMP/mdv.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/mdv.ppm" ffffff 20 258,1,290,12   # the 42, in #1
+      - name: A saved state runs on as the machine would have
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          ./openql -M ql -H 6 -i key:f1@3 -O "$RUNNER_TEMP/ql.state"
+          ./openql -M ql -l "$RUNNER_TEMP/ql.state" -H 4 -i 'type:PRINT 6*7\n@1' -o "$RUNNER_TEMP/state.ppm"
+          ./openql -M ql -H 10 -i key:f1@3 -i 'type:PRINT 6*7\n@7' -o "$RUNNER_TEMP/straight.ppm"
+          cmp "$RUNNER_TEMP/state.ppm" "$RUNNER_TEMP/straight.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/state.ppm" ffffff 20 258,1,290,12   # the 42, in #1
+          ! ./openql -M ql -m 128 -l "$RUNNER_TEMP/ql.state" -H 1 2> "$RUNNER_TEMP/err.txt"
+          grep -q "another RAM size" "$RUNNER_TEMP/err.txt"
       - name: SMSQ/E boots on the Super QL, and SuperBASIC answers
         run: |
           export OPENQL_ROMS="$RUNNER_TEMP/roms"
@@ -39,3 +57,50 @@ jobs:
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ff0000 100000              # its windows
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" 00ff00 200 0,408,1024,512  # the line typed, in #0
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ffffff 60 516,2,600,24     # the 42, in #1
+      - name: A host folder as FLP2_ on the Super QL, written back
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms" XDG_DATA_HOME="$RUNNER_TEMP/data"
+          mkdir -p "$RUNNER_TEMP/folder"
+          printf '10 PRINT "FROM THE HOST"\n' > "$RUNNER_TEMP/folder/hello.bas"
+          ./openql -D "$RUNNER_TEMP/folder" -H 26 -i 'type:LOAD flp2_hello_bas\n@8' -i 'type:20 PRINT 6*7\n@11' -i 'type:SAVE_O flp2_hello_bas\n@14' -i 'type:SAVE flp2_new_bas\n@18'
+          grep -q "PRINT 6\*7" "$RUNNER_TEMP/folder/hello.bas"
+          grep -q "FROM THE HOST" "$RUNNER_TEMP/folder/new_bas"
+      - name: Serial input reaches SuperBASIC on both machines
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          printf 'HELLO QL\n' > "$RUNNER_TEMP/in.txt"
+          ./openql -M ql -S "$RUNNER_TEMP/in.txt" -H 14 -i key:f1@3 -i 'type:OPEN #3,ser1:INPUT #3,a$:PRINT a$\n@6' -o "$RUNNER_TEMP/qser.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/qser.ppm" ffffff 60 258,1,340,12     # HELLO QL, in #1
+          ./openql -S "$RUNNER_TEMP/in.txt" -H 16 -i 'type:OPEN #3,ser1:INPUT #3,a$:PRINT a$\n@8' -o "$RUNNER_TEMP/sser.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/sser.ppm" ffffff 200 516,2,700,24    # HELLO QL, in #1
+      - name: ser1 over TCP, both ways
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          ./openql -M ql -s tcp:5599 -H 3000 -i key:f1@3 -i 'type:OPEN #3,ser1:INPUT #3,a$:PRINT #3,a$&"!"\n@6' &
+          pid=$!
+          python3 -I tests/serial_tcp.py 5599 'OVER TCP' 'OVER TCP!'
+          kill $pid || true
+
+  # openql's own windows are the host's controls (libui-ng): these build them on the other two
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: make mingw-w64-x86_64-gcc mingw-w64-x86_64-SDL2 mingw-w64-x86_64-pkgconf mingw-w64-x86_64-python mingw-w64-x86_64-meson mingw-w64-x86_64-ninja git
+      - run: make openql qlrun LDLIBS="-static-libgcc"
+      - run: make test
+
+  macos:
+    runs-on: macos-15-intel
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install sdl2 meson ninja
+      - run: make openql qlrun CC=clang && make test CC=clang

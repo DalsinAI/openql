@@ -12,9 +12,20 @@ No ROM is included. Fetch them on request with `openql-fetch-roms minerva` and `
 | `openql-windows-x86_64.zip` | Windows 10 and 11, x86-64 (SDL2 included) |
 | `openql-macos-x86_64.tar.gz` | macOS on Intel, and Apple silicon through Rosetta (SDL2 included; the first time, right-click and Open) |
 
-Not yet: the QL's microdrives, the network, serial input, the floppy controller's interrupt.
+Not yet: the QL's own network (QLAN) wire.
 
 New since v0.1.0:
+
+- **A launcher**: `openql` on its own opens a window of the host's own controls (GTK, Win32 or Cocoa, in the system font, under a black and silver Sinclair header) to choose the machine, memory, disks, picture, speed and sound, and to **Get QL/E** (downloaded from sinclairql.net and put in WIN1_ with the settings it wants) or fetch the ROMs. It remembers the choices.
+- **A menu on F12**, a host window too: swap floppies and cartridges (or make a blank one), saved states in four slots, type the clipboard in (also Ctrl+Shift+V), speed (2x, 4x, as fast as it goes; Ctrl+F8), the picture's scaling (4:3, whole pixels, fill), full screen, reset, back to the launcher.
+- **A host folder as a disk**: `-D FOLDER` (or the launcher, or the menu) puts a folder on the host in the Super QL's FLP2_ as a QL disk, and writes what the QL saved back to it when the disk comes out.
+- **Saved states** on both machines, also from the command line: `-l FILE` starts from one, `-O FILE` saves one after `-H`.
+
+- **Serial input** on both machines: `-S FILE` sends a file in on ser1 (COM1), and `-s tcp:PORT` or `-s tcp:HOST:PORT` makes ser1 a null-modem cable over TCP, both ways, between two openqls or to a terminal program.
+- **The Super QL's external interrupt register** shows the multi-I/O card's IRQ lines: the floppy controller (IRQ 6), the IDE disk (IRQ 14) and the serial ports (IRQ 3 and 4).
+- Floppy: a seek's status is no longer mixed up with the reset's polling statuses, so SMSQ/E's FORMAT gets through its tracks.
+
+- **Microdrives on the QL**: `-d FILE` puts a `.mdv` cartridge image in mdv1_ (a second `-d`: mdv2_), or drop one on the window. QDOS's own microdrive code reads, writes and FORMATs it through the ZX8302, at the tape's real speed. A new file is a blank cartridge.
 
 - AC090's interpreter runs plain instructions without its per-step checks: the same frames, faster.
 - `openql -H` takes `-i key:NAME@T` and `-i type:TEXT@T`, so both machines can be driven without a window. CI now boots SMSQ/E and checks that SuperBASIC answers, as it does for Minerva.

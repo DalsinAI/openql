@@ -35,6 +35,20 @@ class Catalogue(unittest.TestCase):
             self.assertEqual(len(r["sha256"]), 64)
             self.assertEqual(len(r["romSha256"]), 64)
 
+    def test_every_disk_is_whole(self):
+        disks = json.loads((ROOT / "roms.json").read_text())["disks"]
+        self.assertEqual({d["id"] for d in disks}, {"qle"})
+        for d in disks:
+            for k in ("machine", "file", "url", "sha256", "member", "romSha256", "romBytes", "licence"):
+                self.assertIn(k, d)
+            self.assertTrue(d["url"].startswith("https://"))
+
+    def test_a_disk_already_there_is_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "QLE.WIN").write_bytes(b"written to")
+            self.assertEqual(fetch.main(["--dir", d, "qle"]), 0)
+            self.assertEqual((Path(d) / "QLE.WIN").read_bytes(), b"written to")
+
     def test_no_rom_is_in_the_repository(self):
         names = {r["member"] for r in fetch.catalogue()["roms"]} | {r["file"] for r in fetch.catalogue()["roms"]}
         found = [p for p in ROOT.rglob("*") if p.name in names or p.suffix.lower() in (".rom", ".bin")]
