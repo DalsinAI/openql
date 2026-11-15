@@ -485,7 +485,7 @@ static void present(int machine_shown, int ui_shown) {
     if (ui_shown) {
         SDL_Rect d = fit43(ow, oh);
         if (!machine_shown) {                       /* the launcher: its own background, edge to edge */
-            SDL_SetRenderDrawColor(ren, 0x10, 0x18, 0x28, 255);
+            SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
             SDL_RenderClear(ren);
         }
         SDL_UpdateTexture(uitex, NULL, ui_px, UI_W * 4);
@@ -558,6 +558,7 @@ static int machine_start(const settings *c, const char *cart) {
     machine_down();
     machine = c->machine == SET_QL ? M_QL : M_SUPERQL;
     const char *rom = rom_for(c);
+    ui_load_ql_font(rom);                  /* the QL's characters for openql's own screens */
     if (!rom || !file_exists(rom)) {
         say(UI_BAD, "no %s ROM yet: Fetch the ROMs first", machine == M_QL ? "Minerva" : "SMSQ/E");
         return -1;
@@ -840,14 +841,16 @@ static int launcher(void) {
     }
     for (;;) {
         fetch_done();
+        if (!ui_have_ql_font() && ui_load_ql_font(fetched_rom(SET_QL))) ui_load_ql_font(fetched_rom(SET_SUPERQL));
         int n = launcher_rows(rows);
         if (want_row) { for (int i = 0; i < n; i++) if (rows[i].id == want_row) list.sel = i; want_row = 0; }
         ui_clear(UI_BG);
-        ui_text(40, 24, "OpenQL", UI_TEXT, 3);
-        ui_text(40 + ui_text_w("OpenQL", 3) + 16, 46, "a Sinclair QL or a Super QL", UI_DIM, 1);
-        ui_list_draw(&list, rows, n, 30, 84, UI_W - 60, UI_H - 84 - 64, 230);
-        if (status[0]) ui_text_fit(40, UI_H - 56, UI_W - 80, status, status_colour);
-        ui_text(40, UI_H - 30, "Up/Down choose   Left/Right change   Enter go   Del empties   Esc quit", UI_DIM, 1);
+        ui_text(40, 14, "OpenQL", UI_TEXT, 3);
+        ui_text(40 + ui_text_w("OpenQL", 3) + 20, 44, "a Sinclair QL or a Super QL", UI_DIM, 1);
+        ui_rect(40, 82, UI_W - 80, 4, UI_EDGE);
+        ui_list_draw(&list, rows, n, 30, 100, UI_W - 60, UI_H - 100 - 70, 300);
+        if (status[0]) ui_text_fit(40, UI_H - 64, UI_W - 80, status, status_colour);
+        ui_text(40, UI_H - 34, "Up/Down choose  Left/Right change  Enter go  Del empties  Esc quit", UI_DIM, 1);
         present(0, 1);
 
         SDL_Event e;
@@ -1057,14 +1060,15 @@ static int menu(void) {
     for (;;) {
         int n = menu_rows(rows);
         ui_clear(0x80000000u);
-        int pw = 520, ph = 22 * n + 90, px = (UI_W - pw) / 2, py = (UI_H - ph) / 2;
+        int pw = 760, ph = 24 * n + 100, px = (UI_W - pw) / 2, py = (UI_H - ph) / 2;
         if (py < 8) { py = 8; ph = UI_H - 16; }
         ui_rect(px, py, pw, ph, UI_PANEL);
-        ui_frame(px, py, pw, ph, 0x60e8ecf2u);
+        ui_frame(px, py, pw, ph, UI_EDGE);
+        ui_frame(px + 1, py + 1, pw - 2, ph - 2, UI_EDGE);
         ui_text(px + 20, py + 14, machine == M_QL ? "Sinclair QL" : "Super QL", UI_ACCENT, 1);
         ui_text(px + pw - 20 - ui_text_w("F12 or Esc: back", 1), py + 14, "F12 or Esc: back", UI_DIM, 1);
-        ui_list_draw(&list, rows, n, px + 10, py + 40, pw - 20, ph - 76, 200);
-        if (status[0]) ui_text_fit(px + 20, py + ph - 28, pw - 40, status, status_colour);
+        ui_list_draw(&list, rows, n, px + 10, py + 46, pw - 20, ph - 86, 330);
+        if (status[0]) ui_text_fit(px + 20, py + ph - 32, pw - 40, status, status_colour);
         present(1, 1);
         SDL_Event e;
         if (!SDL_WaitEventTimeout(&e, 100)) continue;
@@ -1282,6 +1286,8 @@ int main(int argc, char **argv) {
     const char *rom = NULL, *cart = NULL, *prn = NULL, *ser = NULL, *dump = NULL;
     int ram = -1, full = 0, quiet = 0, nflp = 0, nmdv = 0, opt, force_launcher = 0, any = 0;
     double headless = 0;
+    const char *inputs[256];               /* -i: read once the machine is known (its keyboard differs) */
+    int ninputs = 0;
     settings_load(&cfg, settings_path());
     settings saved = cfg;
     settings line;                          /* what the command line asks for, over the defaults */
@@ -1320,7 +1326,7 @@ int main(int argc, char **argv) {
         case 'o': dump = optarg; break;
         case 'O': state_out = optarg; break;
         case 'l': state_in = optarg; break;
-        case 'i': add_input(optarg); break;
+        case 'i': if (ninputs < 256) inputs[ninputs++] = optarg; break;
         default: usage(); return 2;
         }
     }
@@ -1350,6 +1356,8 @@ int main(int argc, char **argv) {
     if (ser_in && hostser_input_file(&ser1, ser_in)) return 1;
     if (prn && !(printer_file = fopen(prn, "ab"))) perror(prn);
     keymap_init();
+    machine = cfg.machine == SET_QL ? M_QL : M_SUPERQL;
+    for (int i = 0; i < ninputs; i++) add_input(inputs[i]);
 
     if (headless > 0) {                    /* as fast as the host goes: tests and boot checks */
         if (machine_start(&cfg, cart)) return 1;

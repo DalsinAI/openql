@@ -41,23 +41,57 @@ void ui_frame(int x, int y, int w, int h, uint32_t argb) {
     ui_rect(x, y + 1, 1, h - 2, argb); ui_rect(x + w - 1, y + 1, 1, h - 2, argb);
 }
 
+/* The QL's founts: a byte for the first character, one for the count less
+ * one, then nine rows a character, bit 7 the left pixel, six wide. */
+static uint8_t qlfont[97][9];
+static int have_qlfont;
+
+int ui_have_ql_font(void) { return have_qlfont; }
+
+int ui_load_ql_font(const char *rom_path) {
+    if (have_qlfont) return 0;
+    FILE *f = rom_path ? fopen(rom_path, "rb") : NULL;
+    if (!f) return -1;
+    static uint8_t rom[1 << 20];
+    size_t n = fread(rom, 1, sizeof rom, f);
+    fclose(f);
+    for (size_t i = 0; i + 2 + 97 * 9 <= n; i++) {
+        if (rom[i] != 0x1f || rom[i + 1] != 0x60) continue;
+        const uint8_t *g = rom + i + 2;
+        static const uint8_t blank[9];
+        /* the space is empty, and A is the QL's A */
+        if (memcmp(g + 9, blank, 9) || g[34 * 9] != 0x38 || g[34 * 9 + 1] != 0x44 || g[34 * 9 + 3] != 0x7c) continue;
+        memcpy(qlfont, g, sizeof qlfont);
+        have_qlfont = 1;
+        return 0;
+    }
+    return -1;
+}
+
 int ui_text(int x, int y, const char *s, uint32_t argb, int scale) {
     for (; *s; s++) {
         unsigned ch = (unsigned char)*s;
         if (ch < 32 || ch > 126) ch = '?';
-        const unsigned char *g = font8x16[ch - 32];
-        for (int r = 0; r < 16; r++)
-            for (int b = 0; b < 8; b++)
-                if (g[r] & (0x80 >> b)) ui_rect(x + b * scale, y + r * scale, scale, scale, argb);
-        x += 8 * scale;
+        if (have_qlfont) {                       /* a blank row on top, as the QL leaves one */
+            const uint8_t *g = qlfont[ch - 0x1f];
+            for (int r = 0; r < 9; r++)
+                for (int b = 0; b < 6; b++)
+                    if (g[r] & (0x80 >> b)) ui_rect(x + b * 2 * scale, y + (r + 1) * 2 * scale, 2 * scale, 2 * scale, argb);
+        } else {
+            const unsigned char *g = font8x16[ch - 32];
+            for (int r = 0; r < 16; r++)
+                for (int b = 0; b < 8; b++)
+                    if (g[r] & (0x80 >> b)) ui_rect(x + (2 + b) * scale, y + (2 + r) * scale, scale, scale, argb);
+        }
+        x += UI_CW * scale;
     }
     return x;
 }
 
-int ui_text_w(const char *s, int scale) { return (int)strlen(s) * 8 * scale; }
+int ui_text_w(const char *s, int scale) { return (int)strlen(s) * UI_CW * scale; }
 
 void ui_text_fit(int x, int y, int w, const char *s, uint32_t argb) {
-    int fit = w / 8;
+    int fit = w / UI_CW;
     int n = (int)strlen(s);
     if (n <= fit) { ui_text(x, y, s, argb, 1); return; }
     if (fit < 4) return;
@@ -81,7 +115,7 @@ int ui_mouse(int wx, int wy, int *cx, int *cy) {
 
 /* ---- lists of rows ------------------------------------------------------------ */
 
-#define ROW_H 22
+#define ROW_H 24
 
 static int selectable(const ui_row *r) { return r->kind != ROW_HEADING && r->kind != ROW_INFO && !r->disabled; }
 
@@ -108,24 +142,25 @@ void ui_list_draw(ui_list *l, const ui_row *rows, int n, int x, int y, int w, in
         const ui_row *r = &rows[i];
         int ry = y + (i - l->top) * ROW_H;
         if (r->kind == ROW_HEADING) {
-            ui_text(x + 4, ry + 4, r->label, UI_ACCENT, 1);
-            ui_rect(x + 4 + ui_text_w(r->label, 1) + 8, ry + 12, w - ui_text_w(r->label, 1) - 16, 1, 0x60e8ecf2u);
+            ui_text(x + 4, ry + 2, r->label, UI_ACCENT, 1);
+            ui_rect(x + 4 + ui_text_w(r->label, 1) + (r->label[0] ? 12 : 0), ry + 12, w - ui_text_w(r->label, 1) - 16, 2, 0xffff0000u);
             continue;
         }
         int on = i == l->sel;
         if (on) ui_rect(x, ry, w, ROW_H - 2, UI_SEL);
-        uint32_t fg = r->disabled ? UI_DIM : UI_TEXT;
-        ui_text(x + 12, ry + 3, r->label, fg, 1);
+        uint32_t fg = r->disabled ? 0xff008000u : UI_TEXT;   /* a dark green: not now */
+        if (on) fg = UI_TEXT;
+        ui_text(x + 12, ry + 2, r->label, fg, 1);
         if (r->value[0]) {
             int vx = x + (label_w > 0 ? label_w : 12 + ui_text_w(r->label, 1) + 16);
             int vw = x + w - 12 - vx;
             char v[300];
             if (r->kind == ROW_CHOICE && on) snprintf(v, sizeof v, "< %s >", r->value);
             else snprintf(v, sizeof v, "%s", r->value);
-            ui_text_fit(vx, ry + 3, vw, v, r->colour ? r->colour : (r->kind == ROW_INFO ? UI_DIM : fg));
+            ui_text_fit(vx, ry + 2, vw, v, on ? UI_TEXT : r->colour ? r->colour : UI_DIM);
         }
     }
-    if (l->top > 0) ui_text(x + w - 16, y - 16, "^", UI_DIM, 1);
+    if (l->top > 0) ui_text(x + w - 16, y - 20, "^", UI_DIM, 1);
     if (l->top + vis < n) ui_text(x + w - 16, y + vis * ROW_H - 4, "v", UI_DIM, 1);
 }
 
@@ -321,13 +356,14 @@ ui_browser *ui_browser_open(const char *title, const char *start, int want_dir) 
 
 void ui_browser_draw(ui_browser *b) {
     ui_rect(40, 30, UI_W - 80, UI_H - 60, UI_PANEL);
-    ui_frame(40, 30, UI_W - 80, UI_H - 60, 0x60e8ecf2u);
+    ui_frame(40, 30, UI_W - 80, UI_H - 60, UI_EDGE);
+    ui_frame(41, 31, UI_W - 82, UI_H - 62, UI_EDGE);
     ui_text(60, 44, b->title, UI_ACCENT, 1);
-    ui_text_fit(60, 66, UI_W - 120, b->dir[0] ? b->dir : "the drives", UI_DIM);
-    ui_rect(60, 88, UI_W - 120, 1, 0x40e8ecf2u);
-    if (b->msg[0]) ui_text(60, 100, b->msg, UI_BAD, 1);
-    ui_list_draw(&b->list, b->rows, b->n, 50, 96, UI_W - 100, UI_H - 96 - 70, 0);
-    ui_text(60, UI_H - 58, b->want_dir ? "Enter opens a folder   Backspace up a folder   Esc cancel"
+    ui_text_fit(60, 70, UI_W - 120, b->dir[0] ? b->dir : "the drives", UI_DIM);
+    ui_rect(60, 96, UI_W - 120, 2, UI_EDGE);
+    if (b->msg[0]) ui_text(60, 108, b->msg, UI_BAD, 1);
+    ui_list_draw(&b->list, b->rows, b->n, 50, 106, UI_W - 100, UI_H - 106 - 76, 0);
+    ui_text(60, UI_H - 62, b->want_dir ? "Enter opens a folder   Backspace up a folder   Esc cancel"
                                        : "Enter choose   Backspace up a folder   Esc cancel   a letter: jump", UI_DIM, 1);
 }
 

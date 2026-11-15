@@ -9,20 +9,28 @@
 #include <SDL.h>
 #include <stdint.h>
 
-#define UI_W 800
-#define UI_H 600
+#define UI_W 1024
+#define UI_H 768
+#define UI_CW 12                /* a character: the QL's 6 x 10, in pixels of two by two */
+#define UI_CH 20
 
-/* colours, ARGB */
-#define UI_BG      0xf0101828u
-#define UI_PANEL   0xf81c2636u
-#define UI_SEL     0xff2f5d9au
-#define UI_TEXT    0xffe8ecf2u
-#define UI_DIM     0xff8a96a8u
-#define UI_ACCENT  0xfff0c040u
-#define UI_GOOD    0xff6cd08cu
-#define UI_BAD     0xfff07a6au
+/* colours, ARGB: the QL's own, as its F1/F2 screen and SuperBASIC show them */
+#define UI_BG      0xff000000u     /* black */
+#define UI_PANEL   0xff000000u
+#define UI_EDGE    0xffff0000u     /* red */
+#define UI_SEL     0xffff0000u     /* the selected row: a red bar */
+#define UI_TEXT    0xffffffffu     /* white */
+#define UI_DIM     0xff00ff00u     /* green, as the QL's command window writes */
+#define UI_ACCENT  0xffff0000u     /* red */
+#define UI_GOOD    0xff00ff00u     /* green */
+#define UI_BAD     0xffff00ffu     /* magenta */
 
 extern uint32_t ui_px[UI_W * UI_H];
+
+/* The QL's own characters, from a QL ROM (Minerva or SMSQ/E): 0 if found.
+ * Until then openql's fallback font is used. */
+int ui_load_ql_font(const char *rom_path);
+int ui_have_ql_font(void);
 
 void ui_clear(uint32_t argb);
 void ui_rect(int x, int y, int w, int h, uint32_t argb);
