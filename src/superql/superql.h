@@ -73,6 +73,7 @@ typedef struct sql_ide {              /* one ATA disk, PIO, on the primary chann
     int pos, left, writing;           /* the sector in buf: bytes moved, sectors still to go */
     uint32_t lba;
     int read_only;
+    int geometry;                     /* the QLWA header names no geometry: the disk's is shown in sector 0 */
 } sql_ide;
 
 typedef struct superql {

@@ -299,6 +299,14 @@ static int raw_for_ascii(int ch, int *shift) {
         0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a,
     };
     *shift = 0;
+    if (machine == M_SUPERQL) {   /* SMSQ/E's keyboard is a UK one: " and @ swap, # and \ have keys of their own */
+        static const struct { char ch; uint8_t raw, shift; } uk[] = {
+            { '"', 0x02, 1 }, { '@', 0x2a, 1 }, { '#', 0x2b, 0 }, { '~', 0x2b, 1 },
+            { '\\', 0x30, 0 }, { '|', 0x30, 1 },
+        };
+        for (size_t i = 0; i < sizeof uk / sizeof uk[0]; i++)
+            if (uk[i].ch == ch) { *shift = uk[i].shift; return uk[i].raw; }
+    }
     if (ch == ' ') return 0x40;
     if (ch == '\n') return 0x44;
     const char *p = ch ? strchr(plain, ch) : NULL;

@@ -145,6 +145,33 @@ int main(void) {
     wr(&s, IDE(0x1f7), 0xec, 1);
     CHECK(rd(&s, IDE(0x1f7), 1) == 0, "no slave");
 
+    /* A QXL.WIN from QPC names no geometry: sector 0 shows the drive's, and the file keeps its zeros */
+    memset(sec512, 0, 512);
+    memcpy(sec512, "QLWA", 4);
+    wf = fopen(disk, "r+b");
+    if (!wf || fwrite(sec512, 1, 512, wf) != 512) return 1;
+    fclose(wf);
+    wr(&s, IDE(0x1f6), 0xe0, 1);
+    wr(&s, IDE(0x1f2), 1, 1);
+    wr(&s, IDE(0x1f3), 0, 1); wr(&s, IDE(0x1f4), 0, 1); wr(&s, IDE(0x1f5), 0, 1);
+    wr(&s, IDE(0x1f7), 0x20, 1);
+    uint16_t hdr[256];
+    for (int i = 0; i < 256; i++) hdr[i] = (uint16_t)rd(&s, io + (0x1f0 << 2), 2);
+    CHECK(hdr[0x24 / 2] == 63 && hdr[0x26 / 2] == 16, "QLWA with no geometry: 63 sectors, 16 heads shown (%u %u)",
+          hdr[0x24 / 2], hdr[0x26 / 2]);
+    wr(&s, IDE(0x1f7), 0x30, 1);
+    for (int i = 0; i < 256; i++) wr(&s, io + (0x1f0 << 2), hdr[i], 2);
+    f = fopen(disk, "rb"); uint8_t geo[4] = { 1, 1, 1, 1 };
+    fseek(f, 0x24, SEEK_SET); if (fread(geo, 1, 4, f) != 4) geo[0] = 1; fclose(f);
+    CHECK(!geo[0] && !geo[1] && !geo[2] && !geo[3], "written back: the file keeps no geometry");
+    sec512[0x25] = 17; sec512[0x27] = 4;               /* a disk made on a Q40: 17 sectors, 4 heads */
+    wf = fopen(disk, "r+b");
+    if (!wf || fwrite(sec512, 1, 512, wf) != 512) return 1;
+    fclose(wf);
+    wr(&s, IDE(0x1f7), 0x20, 1);
+    for (int i = 0; i < 256; i++) rd(&s, io + (0x1f0 << 2), 2);
+    CHECK(s.ide.spt == 17 && s.ide.heads == 4, "a Q40 disk's geometry is the drive's (%u %u)", s.ide.spt, s.ide.heads);
+
     /* the serial mouse on COM2, as SMSQ/E's com_check and com_mouse find it */
 #define COM2(r) (0xff400000 + ((0x2f8 + (r)) << 2) + 1)
 #define ISA(p) (0xff400000 + ((p) << 2) + 1)

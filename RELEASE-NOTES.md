@@ -19,4 +19,6 @@ New since v0.1.0:
 - AC090's interpreter runs plain instructions without its per-step checks: the same frames, faster.
 - `openql -H` takes `-i key:NAME@T` and `-i type:TEXT@T`, so both machines can be driven without a window. CI now boots SMSQ/E and checks that SuperBASIC answers, as it does for Minerva.
 - `-m` says when it is outside the machine's range, and refuses a value that is not a number.
+- WIN1 takes a QXL.WIN made by QPC or Q-emuLator, which names no disk geometry: before, SMSQ/E read the wrong sectors past its first 2 MB. QL/E's QLE.WIN boots to its desktop.
+- `-i type:` types for SMSQ/E's UK keyboard on the Super QL (`"`, `@`, `#`, `\\`, `|`, `~`).
 - Fixes: a negative shift in the Super QL's sound (undefined in C); the picture buffer is freed on exit.
