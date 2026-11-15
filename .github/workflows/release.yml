@@ -2,6 +2,7 @@ name: Release OpenQL
 
 # A tag v* builds OpenQL for Linux, Windows and macOS and publishes the release.
 # Running it by hand on main with a version (v0.1.0) does the same and makes the tag.
+# A version with a dash (v0.1.1-rc1) is published as a pre-release.
 # A pull request that touches the build runs the same builds, without publishing.
 
 concurrency:
@@ -106,10 +107,12 @@ jobs:
           TAG: ${{ inputs.version || github.ref_name }}
         run: |
           cd dist && sha256sum * > SHA256SUMS && cd ..
+          pre=""
+          case "$TAG" in *-*) pre="--prerelease" ;; esac   # v0.1.1-rc1 and the like are release candidates
           if gh release view "$TAG" > /dev/null 2>&1; then
             # The tag was pushed again (a history rewrite moves it): the release gets this commit's builds.
             gh release upload "$TAG" dist/* --clobber
-            gh release edit "$TAG" --notes-file RELEASE-NOTES.md
+            gh release edit "$TAG" --notes-file RELEASE-NOTES.md $pre
           else
-            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "OpenQL ${TAG#v}" --notes-file RELEASE-NOTES.md
+            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "OpenQL ${TAG#v}" --notes-file RELEASE-NOTES.md $pre
           fi
