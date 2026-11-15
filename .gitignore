@@ -9,3 +9,6 @@ __pycache__/
 *.win
 /tests/fpu_test
 /tests/fpu_soft_test
+/tests/settings_test
+/tests/hostdir_test
+/build/

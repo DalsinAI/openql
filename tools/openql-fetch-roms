@@ -3,12 +3,14 @@
 
     openql-fetch-roms [--dir DIR] [--zip FILE] [ID ...]
 
-IDs are those in roms.json (minerva, smsqe); none fetches them all. Each
-download and the ROM inside it are checked against roms.json's SHA-256 before
-the ROM is kept. They go to $OPENQL_ROMS, else $XDG_DATA_HOME/openql/roms,
-else ~/.local/share/openql/roms (%APPDATA%/openql/roms on Windows),
-where openql looks for them. --zip uses a
-zip already downloaded instead of the network (one ID only).
+IDs are those in roms.json: the ROMs (minerva, smsqe) and the disks (qle,
+QL/E's QLE.WIN). None fetches the ROMs. Each download and the file inside it
+are checked against roms.json's SHA-256 before the file is kept. ROMs go to
+$OPENQL_ROMS, else $XDG_DATA_HOME/openql/roms, else
+~/.local/share/openql/roms (%APPDATA%/openql/roms on Windows), where openql
+looks for them; disks go to the disks folder beside it ($OPENQL_DISKS
+instead, if set). A disk already there is kept as it is, since it is written
+to. --zip uses a zip already downloaded instead of the network (one ID only).
 """
 import argparse
 import hashlib
@@ -24,7 +26,7 @@ HERE = Path(__file__).resolve().parent
 
 
 def catalogue() -> dict:
-    for p in (HERE.parent / "roms.json", HERE.parent / "share/openql/roms.json"):
+    for p in (HERE.parent / "roms.json", HERE / "roms.json", HERE.parent / "share/openql/roms.json"):
         if p.is_file():
             return json.loads(p.read_text())
     sys.exit("openql-fetch-roms: no roms.json beside the tool")
@@ -37,6 +39,12 @@ def rom_dir() -> Path:
         return Path(os.environ.get("APPDATA") or Path.home()) / "openql/roms"
     data = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share")
     return Path(data) / "openql/roms"
+
+
+def disk_dir() -> Path:
+    if os.environ.get("OPENQL_DISKS"):
+        return Path(os.environ["OPENQL_DISKS"])
+    return rom_dir().parent / "disks"
 
 
 def sha256(b: bytes) -> str:
@@ -63,20 +71,23 @@ def main(argv=None) -> int:
     ap.add_argument("--dir", type=Path)
     ap.add_argument("--zip", type=Path)
     a = ap.parse_args(argv)
-    roms = {r["id"]: r for r in catalogue()["roms"]}
+    cat = catalogue()
+    roms = {r["id"]: r for r in cat["roms"]}
+    disks = {d["id"]: dict(d, disk=True) for d in cat.get("disks", [])}
     ids = a.ids or list(roms)
+    roms.update(disks)
     unknown = [i for i in ids if i not in roms]
     if unknown:
         sys.exit(f"openql-fetch-roms: no ROM {', '.join(unknown)} (there are {', '.join(roms)})")
     if a.zip and len(ids) != 1:
         sys.exit("openql-fetch-roms: --zip takes one ID")
-    out = a.dir or rom_dir()
-    out.mkdir(parents=True, exist_ok=True)
     failed = 0
     for i in ids:
         rom = roms[i]
+        out = a.dir or (disk_dir() if rom.get("disk") else rom_dir())
+        out.mkdir(parents=True, exist_ok=True)
         dest = out / rom["file"]
-        if dest.is_file() and sha256(dest.read_bytes()) == rom["romSha256"]:
+        if dest.is_file() and (rom.get("disk") or sha256(dest.read_bytes()) == rom["romSha256"]):
             print(f"{rom['name']}: already at {dest}")
             continue
         try:

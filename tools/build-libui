@@ -1,0 +1,22 @@
+#!/bin/sh
+# Builds libui-ng (MIT, https://github.com/libui-ng/libui-ng), the library
+# openql's launcher and menu are made of, as a static library under
+# build/libui-ng. Needs git, meson and ninja (and GTK 3 on Linux).
+set -e
+COMMIT=43ba1ef553c8993a43a67f1ce6e35983a2660d8c
+DIR=${1:-build/libui-ng}
+if [ -f "$DIR/build/meson-out/libui.a" ] && [ "$(git -C "$DIR" rev-parse HEAD 2>/dev/null)" = "$COMMIT" ]; then
+    exit 0
+fi
+if [ ! -d "$DIR/.git" ]; then
+    rm -rf "$DIR"
+    mkdir -p "$DIR"
+    git -C "$DIR" init -q
+    git -C "$DIR" remote add origin https://github.com/libui-ng/libui-ng.git
+fi
+git -C "$DIR" fetch -q --depth 1 origin "$COMMIT"
+git -C "$DIR" checkout -q "$COMMIT"
+rm -rf "$DIR/build"
+meson setup "$DIR/build" "$DIR" --buildtype=release --default-library=static \
+    -Dtests=false -Dexamples=false ${LIBUI_MESON_FLAGS}
+ninja -C "$DIR/build"

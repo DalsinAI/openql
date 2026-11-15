@@ -1,5 +1,5 @@
 {
-  "about": "The Firmware/ROMs OpenQL can fetch on request. None of them is in this repository or shipped with OpenQL: tools/openql-fetch-roms downloads each from its own project and checks it.",
+  "about": "The Firmware/ROMs and disks OpenQL can fetch on request. None of them is in this repository or shipped with OpenQL: tools/openql-fetch-roms downloads each from its own project and checks it.",
   "roms": [
     {
       "id": "minerva",
@@ -24,6 +24,20 @@
       "romSha256": "d0d286e869e2fcaa6f9088cf5ddc231bb7dce1ce45be8e91b719c9d54b316f36",
       "romBytes": 283078,
       "licence": "SMSQ/E licence, Tony Tebby, Wolfgang Lenerz and the SMSQ/E developers; https://www.wlenerz.com/smsqe/"
+    }
+  ],
+  "disks": [
+    {
+      "id": "qle",
+      "machine": "superql",
+      "name": "QL/E 3.23 (QLE.WIN, a QL hard disk full of software)",
+      "file": "QLE.WIN",
+      "url": "https://sinclairql.net/downloads/QLE_WIN.ZIP",
+      "sha256": "8f60fe9b33962a0a1da2f9fec598d224055fee486c2826ca7c0eab0f03544df0",
+      "member": "QLE.WIN",
+      "romSha256": "c381cbf59726a8929e0b15fa1fd3863a738714e52c2b9e9ae3a723cb77a6f877",
+      "romBytes": 83886080,
+      "licence": "QL/E, THE DISTRIBUTION, Urs Koenig (QL/E's own licences inside); https://sinclairql.net/repository.html#QLE"
     }
   ]
 }

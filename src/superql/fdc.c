@@ -162,6 +162,10 @@ static void execute(sql_fdc *f) {
     uint8_t *c = f->cmd;
     int drv = c[1] & 3;
     fdc_drive *d = drive_of(f, drv);
+    /* A command other than SENSE INTERRUPT drops the reset's four polling
+     * statuses: SMSQ/E recalibrates before sensing them, and the seek's own
+     * status must be the one it gets. */
+    if ((c[0] & 0x1f) != 0x08) f->int_n = 0;
     switch (c[0] & 0x1f) {
     case 0x03:                                   /* SPECIFY */
         f->specify[0] = c[1]; f->specify[1] = c[2];

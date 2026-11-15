@@ -4,6 +4,7 @@
  * picture in each display mode.
  */
 #include "superql.h"
+#include "../state.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -29,12 +30,21 @@ static int uart_pending(const sql_uart *c) {      /* received data, its interrup
     return c->rx_head != c->rx_tail && (c->ier & 1) && (c->mcr & 8);
 }
 
+/* The external interrupt register shows the multi-I/O card's IRQ lines: COM2
+ * and COM4 on IRQ 3, COM1 and COM3 on IRQ 4, the floppy controller on IRQ 6
+ * (with DOR's DMA/IRQ gate on), the IDE disk on IRQ 14 (unless nIEN). Bit 0
+ * of the enable register lets them interrupt, on level 2. SMSQ/E's own
+ * drivers poll, so it leaves them off; a driver of one's own can use them. */
 static void update_irq(superql *s) {
     int ser = 0;
     for (int u = 0; u < 4; u++) ser |= uart_pending(&s->com[u]);
     if (ser) s->ir |= SQL_IR_SER; else s->ir &= (uint8_t)~SQL_IR_SER;
     if (s->kq_head != s->kq_tail) s->ir |= SQL_IR_KBD; else s->ir &= (uint8_t)~SQL_IR_KBD;
-    if (s->eir & s->eie) s->ir |= SQL_IR_EINT; else s->ir &= (uint8_t)~SQL_IR_EINT;
+    s->eir = (uint8_t)((uart_pending(&s->com[1]) || uart_pending(&s->com[3]) ? SQL_EIR_IRQ3 : 0) |
+                       (uart_pending(&s->com[0]) || uart_pending(&s->com[2]) ? SQL_EIR_IRQ4 : 0) |
+                       (fdc_irq(&s->fdc) ? SQL_EIR_FDC : 0) |
+                       (s->ide.f && s->ide.intrq && !(s->ide.ctl & 2) ? SQL_EIR_IDE : 0));
+    if (s->eir && (s->eie & 1)) s->ir |= SQL_IR_EINT; else s->ir &= (uint8_t)~SQL_IR_EINT;
     int on = ((s->ir & SQL_IR_KBD) && s->kie) || ((s->ir & SQL_IR_SER) && s->sie) ||
              (s->ir & SQL_IR_FRAME) || (s->ir & SQL_IR_EINT);
     /* the Q40 raises level 2 for all of them, and level 6 for the sample interrupt */
@@ -94,7 +104,7 @@ static void rtc_write(superql *s, unsigned i, uint8_t v) {
 
 /* ---- the IDE disk ------------------------------------------------------ */
 
-static void ide_status(sql_ide *d, uint8_t st) { d->status = st; }
+static void ide_status(sql_ide *d, uint8_t st) { d->status = st; d->intrq = 1; }
 
 static uint32_t ide_lba(const sql_ide *d) {
     if (d->head & 0x40) return (uint32_t)(d->head & 15) << 24 | (uint32_t)d->cylh << 16 | (uint32_t)d->cyll << 8 | d->sect;
@@ -251,15 +261,22 @@ static uint8_t isa_read8(superql *s, unsigned port) {
     case 0x378: return s->lpt_data;
     case 0x379: return 0xdf;                          /* not busy, selected, no error, paper in */
     case 0x37a: return s->lpt_ctl;
-    case 0x3f0: case 0x3f1: case 0x3f2: case 0x3f3: case 0x3f4: case 0x3f5: case 0x3f7:
-        return fdc_read(&s->fdc, port);
+    case 0x3f0: case 0x3f1: case 0x3f2: case 0x3f3: case 0x3f4: case 0x3f5: case 0x3f7: {
+        uint8_t v = fdc_read(&s->fdc, port);
+        update_irq(s);                                /* a result read to its end drops IRQ 6 */
+        return v;
+    }
     case 0x1f1: return s->ide.err;
     case 0x1f2: return s->ide.scnt;
     case 0x1f3: return s->ide.sect;
     case 0x1f4: return s->ide.cyll;
     case 0x1f5: return s->ide.cylh;
     case 0x1f6: return s->ide.head;
-    case 0x1f7: case 0x3f6: return s->ide.f && !(s->ide.head & 0x10) ? s->ide.status : 0x00;
+    case 0x1f7:                                       /* the status: reading it drops INTRQ (the alternate at $3F6 does not) */
+        s->ide.intrq = 0;
+        update_irq(s);
+        return s->ide.f && !(s->ide.head & 0x10) ? s->ide.status : 0x00;
+    case 0x3f6: return s->ide.f && !(s->ide.head & 0x10) ? s->ide.status : 0x00;
     case 0x177: case 0x376: return 0x00;              /* no second channel */
     default: return 0xff;
     }
@@ -316,6 +333,7 @@ static void isa_write8(superql *s, unsigned port, uint8_t v) {
         break;
     default: break;
     }
+    update_irq(s);
 }
 
 /* ---- the bus ----------------------------------------------------------- */
@@ -374,7 +392,11 @@ static void write8(superql *s, uint32_t a, uint8_t v) {
 
 static uint32_t bus_read(void *opaque, uint32_t a, int size) {
     superql *s = opaque;
-    if (size == 2 && a - ISA_BASE < 0x100000u && (((a - ISA_BASE) >> 2) & 0x3ff) == 0x1f0) return ide_data_read(&s->ide);
+    if (size == 2 && a - ISA_BASE < 0x100000u && (((a - ISA_BASE) >> 2) & 0x3ff) == 0x1f0) {
+        uint16_t v = ide_data_read(&s->ide);
+        update_irq(s);
+        return v;
+    }
     uint32_t v = 0;
     for (int i = 0; i < size; i++) v = v << 8 | read8(s, a + (uint32_t)i);
     return v;
@@ -382,7 +404,7 @@ static uint32_t bus_read(void *opaque, uint32_t a, int size) {
 
 static void bus_write(void *opaque, uint32_t a, uint32_t value, int size) {
     superql *s = opaque;
-    if (size == 2 && a - ISA_BASE < 0x100000u && (((a - ISA_BASE) >> 2) & 0x3ff) == 0x1f0) { ide_data_write(&s->ide, (uint16_t)value); return; }
+    if (size == 2 && a - ISA_BASE < 0x100000u && (((a - ISA_BASE) >> 2) & 0x3ff) == 0x1f0) { ide_data_write(&s->ide, (uint16_t)value); update_irq(s); return; }
     if (size > 1 && a - ISA_BASE < 0x100000u) { write8(s, a + (uint32_t)size - 1, (uint8_t)value); return; }   /* a wider write to a byte port */
     if (size > 1 && (a >> 16) == LOWSW_PAGE) { set_low(s, (a & 0xffff) < 0x8000); return; }
     for (int i = 0; i < size; i++) write8(s, a + (uint32_t)i, (uint8_t)(value >> (8 * (size - 1 - i))));
@@ -503,6 +525,13 @@ void sql_mouse_move(superql *s, int dx, int dy) {
 
 void sql_mouse_buttons(superql *s, uint8_t buttons) { s->mouse_buttons = buttons & 3; }
 
+int sql_serial_space(const superql *s, int port) {
+    if (port < 0 || port > 3 || port == s->mouse_port) return 0;
+    const sql_uart *c = &s->com[port];
+    if (!(c->ier & 1) || (c->mcr & 9) != 9) return 0;   /* until a channel is open (DTR, OUT2), what came would be lost */
+    return uart_space(c);
+}
+
 void sql_serial_in(superql *s, int port, uint8_t ch) {
     if (port < 0 || port > 3 || port == s->mouse_port) return;
     uart_put(&s->com[port], ch);
@@ -536,6 +565,56 @@ uint64_t sql_run(superql *s, uint64_t until) {
     }
     update_irq(s);
     return c->instructions - start;
+}
+
+/* ---- saved states -------------------------------------------------------- */
+
+int sql_save_state(superql *s, const char *path, const char **why) {
+    FILE *f = fopen(path, "wb");
+    if (!f) { *why = "cannot write the file"; return -1; }
+    int ok = state_write_header(f, 2, sizeof *s, s->ram_bytes, state_hash(s->rom, s->rom_len)) == 0 &&
+             fwrite(s, sizeof *s, 1, f) == 1 && fwrite(s->ram, 1, s->ram_bytes, f) == s->ram_bytes &&
+             fwrite(s->vram, 1, SQL_VRAM_BYTES, f) == SQL_VRAM_BYTES;
+    if (fclose(f)) ok = 0;
+    if (!ok) { *why = "cannot write the file"; remove(path); return -1; }
+    return 0;
+}
+
+int sql_load_state(superql *s, const char *path, const char **why) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { *why = "no saved state"; return -1; }
+    superql *t = malloc(sizeof *t);
+    int ok = t && state_check_header(f, 2, sizeof *s, s->ram_bytes, state_hash(s->rom, s->rom_len), why) == 0;
+    if (ok && fread(t, sizeof *t, 1, f) != 1) { ok = 0; *why = "the file is cut short"; }
+    /* RAM and video RAM straight in: a file cut short past here leaves a machine to reset */
+    if (ok && (fread(s->ram, 1, s->ram_bytes, f) != s->ram_bytes || fread(s->vram, 1, SQL_VRAM_BYTES, f) != SQL_VRAM_BYTES)) {
+        ok = 0; *why = "the file is cut short: reset";
+    }
+    fclose(f);
+    if (ok) {
+        state_cpu_take(&s->cpu, &t->cpu);
+        s->ir = t->ir; s->eir = t->eir; s->kie = t->kie; s->sie = t->sie; s->eie = t->eie; s->uie = t->uie;
+        s->dmode = t->dmode; s->srate = t->srate; s->led = t->led;
+        memcpy(s->keyq, t->keyq, sizeof s->keyq); s->kq_head = t->kq_head; s->kq_tail = t->kq_tail;
+        s->next_frame = t->next_frame; s->frames = t->frames;
+        memcpy(s->nvram, t->nvram, sizeof s->nvram); s->clock_offset = t->clock_offset; s->rtc_ctl = t->rtc_ctl;
+        memcpy(s->com, t->com, sizeof s->com); s->lpt_data = t->lpt_data; s->lpt_ctl = t->lpt_ctl;
+        /* the disks in now stay in; their controllers' registers come back */
+        sql_ide *d = &s->ide;
+        d->err = t->ide.err; d->scnt = t->ide.scnt; d->sect = t->ide.sect; d->cyll = t->ide.cyll; d->cylh = t->ide.cylh;
+        d->head = t->ide.head; d->status = t->ide.status; d->ctl = t->ide.ctl; d->intrq = t->ide.intrq;
+        memcpy(d->buf, t->ide.buf, sizeof d->buf); d->pos = t->ide.pos; d->left = t->ide.left; d->writing = t->ide.writing; d->lba = t->ide.lba;
+        sql_fdc keep = s->fdc;
+        s->fdc = t->fdc;
+        for (int i = 0; i < FDC_DRIVES; i++) { uint8_t trk = s->fdc.d[i].track; s->fdc.d[i] = keep.d[i]; s->fdc.d[i].track = trk; }
+        memcpy(s->dac, t->dac, sizeof s->dac); s->sample_pending = t->sample_pending; s->next_sample = t->next_sample;
+        s->aq_head = s->aq_tail = 0;
+        s->mouse_dx = s->mouse_dy = 0; s->mouse_buttons = t->mouse_buttons; s->mouse_sent = t->mouse_sent;
+        set_low(s, t->low_rom);
+        update_irq(s);
+    }
+    free(t);
+    return ok ? 0 : -1;
 }
 
 /* ---- floppies and sound --------------------------------------------------- */
