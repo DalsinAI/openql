@@ -39,3 +39,39 @@ jobs:
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ff0000 100000              # its windows
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" 00ff00 200 0,408,1024,512  # the line typed, in #0
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ffffff 60 516,2,600,24     # the 42, in #1
+
+  # ARM64: Linux (a Raspberry Pi's 64-bit OS) and Apple silicon, where the
+  # 68040's FPU is the integer one (src/cpu/fpu_soft.c), not the x87.
+  build-arm64:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDL2
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install sdl2
+          else sudo apt-get update && sudo apt-get install -y --no-install-recommends libsdl2-dev; fi
+      - name: Build
+        run: make openql qlrun
+      - name: The boards' cases, the FPU's and the fetcher's
+        run: make test
+      - name: Minerva boots to its F1/F2 screen, and SuperBASIC answers
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          tools/openql-fetch-roms minerva
+          ./openql -M ql -H 10 -o "$RUNNER_TEMP/f1f2.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/f1f2.ppm" ff0000 1000
+          ./qlrun -s 12 -m 640 -p "$RUNNER_TEMP/sb" -i key:f1@3 -i 'type:PRINT 6*7\n@6' "$OPENQL_ROMS/minerva-1.98j4.rom" > /dev/null
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/sb-011.ppm" ff0000 40000
+      - name: SMSQ/E boots on the Super QL, and SuperBASIC answers
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          tools/openql-fetch-roms smsqe
+          ./openql -H 12 -i 'type:PRINT 6*7\n@8' -o "$RUNNER_TEMP/sql.ppm"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ff0000 100000              # its windows
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" 00ff00 200 0,408,1024,512  # the line typed, in #0
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ffffff 60 516,2,600,24     # the 42, in #1

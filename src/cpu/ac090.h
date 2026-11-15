@@ -26,6 +26,26 @@ enum { AC090_CLR_IC_ALL,     /* CINVA/CPUSHA of the instruction cache: every tra
        AC090_CLR_MMU,        /* TC, URP or SRP loads that changed the tables seen (cache_epoch) */
        AC090_CLR_MMU_SAME }; /* ones that loaded the same tables again: translations untouched */
 
+/* The FPU's registers. On x86 hosts long double is the x87's 80-bit
+ * extended format, the 68881's own less its 16 unused bits, and FP0-FP7
+ * are held in it. Elsewhere (ARM64: Apple Silicon, where long double is
+ * binary64, and Linux, where it is IEEE quad) they are held as the 80 bits
+ * themselves and fpu_soft.c does the arithmetic in integers.
+ * -DAC090_FPU_SOFT=1 takes that way on x86 too (the tests do). */
+#ifndef AC090_FPU_SOFT
+#if defined(__x86_64__) || defined(__i386__)
+#define AC090_FPU_SOFT 0
+#else
+#define AC090_FPU_SOFT 1
+#endif
+#endif
+typedef struct ac090_fx80 { uint64_t m; uint16_t se; } ac090_fx80;   /* significand; sign and exponent */
+#if AC090_FPU_SOFT
+typedef ac090_fx80 ac090_fpreg;
+#else
+typedef long double ac090_fpreg;
+#endif
+
 typedef struct ac090_bus {
     /* 64 KB pages over the address space (256 cover a 24-bit CPU, all 65536
      * a 32-bit one). A NULL entry sends the access to read/write below.
@@ -59,9 +79,9 @@ typedef struct ac090 {
     uint32_t s, m, t1, t0, ipl;  /* SR system byte */
     uint32_t vbr, sfc, dfc, cacr, caar;
     uint32_t tc, itt0, itt1, dtt0, dtt1, mmusr, urp, srp;   /* 68040 MMU registers (translation: ac090_mmu.c) */
-    long double fp[8];           /* FPU (68040 only): FP0-FP7, host extended */
+    ac090_fpreg fp[8];           /* FPU (68040 only): FP0-FP7, extended */
     uint32_t fpcr, fpsr, fpiar;
-    long double fp_tmp;          /* scratch for translated FPU code */
+    ac090_fpreg fp_tmp;          /* scratch for translated FPU code */
     uint32_t addr_mask;          /* 0x00ffffff on the EC020 and 68000 */
     int model;
     int stopped;

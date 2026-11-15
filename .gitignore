@@ -7,3 +7,5 @@ __pycache__/
 *.ppm
 *.rom
 *.win
+/tests/fpu_test
+/tests/fpu_soft_test

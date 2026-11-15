@@ -9,13 +9,16 @@ No ROM is included. Fetch them on request with `openql-fetch-roms minerva` and `
 | Download | For |
 | --- | --- |
 | `openql-linux-x86_64.tar.gz` | Linux x86-64 (needs SDL2: `sudo apt install libsdl2-2.0-0`) |
+| `openql-linux-arm64.tar.gz` | Linux on ARM64, such as a Raspberry Pi 4 or 5 with a 64-bit OS (needs SDL2: `sudo apt install libsdl2-2.0-0`) |
 | `openql-windows-x86_64.zip` | Windows 10 and 11, x86-64 (SDL2 included) |
-| `openql-macos-x86_64.tar.gz` | macOS on Intel, and Apple silicon through Rosetta (SDL2 included; the first time, right-click and Open) |
+| `openql-macos-arm64.tar.gz` | macOS on Apple silicon, natively (SDL2 included; the first time, right-click and Open) |
+| `openql-macos-x86_64.tar.gz` | macOS on Intel (SDL2 included; the first time, right-click and Open) |
 
 Not yet: the QL's microdrives, the network, serial input, the floppy controller's interrupt.
 
 New since v0.1.0:
 
+- Native builds for Apple silicon and for Linux on ARM64. The Super QL's 68040 FPU no longer needs the x87's 80-bit long double: on ARM64 it works its 80-bit values out in integers, as AmiCradle's AC090 does on the Raspberry Pi 5. Arithmetic, conversions and packed decimal give the same bits as the x86 build (checked by `make test` on every build); the transcendentals are correctly rounded, where the x86 build's C library is out by an ulp now and then.
 - AC090's interpreter runs plain instructions without its per-step checks: the same frames, faster.
 - `openql -H` takes `-i key:NAME@T` and `-i type:TEXT@T`, so both machines can be driven without a window. CI now boots SMSQ/E and checks that SuperBASIC answers, as it does for Minerva.
 - `-m` says when it is outside the machine's range, and refuses a value that is not a number.

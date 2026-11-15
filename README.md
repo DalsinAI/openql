@@ -9,7 +9,7 @@ The boards and the 68k core are our own C, written from the machines' documented
 
 ## Download
 
-Releases for Linux, Windows and macOS are on the Releases page. OpenQL draws in a window of its own on the host (F11 or `-F` for full screen): no browser.
+Releases for Linux (x86-64 and ARM64), Windows and macOS (Apple silicon and Intel) are on the Releases page. OpenQL draws in a window of its own on the host (F11 or `-F` for full screen): no browser.
 
 ## Build
 

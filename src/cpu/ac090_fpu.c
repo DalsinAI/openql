@@ -5,13 +5,16 @@
  * decimal, FMOVECR) are done here too, so software never needs its
  * emulation package. Included by ac090.c.
  *
- * FP0-FP7 are held as the host's 80-bit extended type, which is the
- * 68881 extended format without its 16 unused bits.
+ * On x86 hosts FP0-FP7 are held as the host's 80-bit extended type, which
+ * is the 68881 extended format without its 16 unused bits, and the x87
+ * does the arithmetic. Elsewhere (ARM64) fpu_soft.c holds the 80 bits
+ * themselves and does it in integers, to the same bits.
  */
 #include <math.h>
 #include <float.h>
-#include "fpu_special.h"                 /* NaN and infinite operands without the x87's assists */
+#include "fpu_special.h"                 /* extended values from their bits */
 #include <stdio.h>
+#include "fpu_decimal.c"                 /* packed decimal */
 
 /* FPSR condition code bits */
 #define FPCC_N   0x08000000u
@@ -19,7 +22,11 @@
 #define FPCC_I   0x02000000u
 #define FPCC_NAN 0x01000000u
 
-#if defined(__x86_64__) || defined(__i386__)
+#if AC090_FPU_SOFT
+#include "fpu_soft.c"
+#else
+typedef long double fpv;
+#define fv_isnan(v) isnan(v)
 typedef union { long double v; struct { uint64_t mant; uint16_t se; } b; } x87;
 
 static long double from_ext(const uint8_t *p) {    /* 12 bytes, big-endian */
@@ -48,87 +55,10 @@ static void to_ext(long double v, uint8_t *p) {
     p[0] = (uint8_t)(x.b.se >> 8); p[1] = (uint8_t)x.b.se; p[2] = p[3] = 0;
     for (int i = 0; i < 8; i++) p[4 + i] = (uint8_t)(x.b.mant >> (56 - 8 * i));
 }
-#elif __LDBL_MANT_DIG__ == 113 && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-/* ARM64: long double is IEEE quad, with the x87's sign and 15-bit exponent
- * (the same bias) and a 112-bit fraction behind a hidden integer bit, so
- * the 68k's extended values move across bit for bit (the fraction's low
- * bits zero) and back rounded to 64 bits. NaN payloads and infinities come
- * out as the x87 writes them, so both hosts store the same bytes. */
-typedef union { long double v; struct { uint64_t lo, hi; } q; } quad;
-static long double from_ext(const uint8_t *p) {    /* 12 bytes, big-endian */
-    uint16_t se = (uint16_t)(p[0] << 8 | p[1]);
-    uint64_t mant = 0;
-    for (int i = 4; i < 12; i++) mant = mant << 8 | p[i];
-    int e = se & 0x7fff;
-    if (e != 0x7fff && !(mant >> 63)) {            /* unnormal, denormal or a pseudo-denormal: by value */
-        long double v = ldexpl((long double)mant, (e ? e : 1) - 16383 - 63);
-        return (se & 0x8000) ? -v : v;
-    }
-    if (!e) e = 1;                                 /* a pseudo-denormal (integer bit set): 1.f x 2^-16382 */
-    uint64_t f = mant << 1;                        /* the 63 fraction bits, at the top */
-    quad x;
-    x.q.hi = (uint64_t)(se & 0x8000) << 48 | (uint64_t)e << 48 | f >> 16;
-    x.q.lo = f << 48;
-    return x.v;
-}
-static void to_ext(long double v, uint8_t *p) {
-    quad x; x.v = v;
-    uint16_t se = (uint16_t)(x.q.hi >> 48);
-    int e = se & 0x7fff;
-    uint64_t f = x.q.hi << 16 | x.q.lo >> 48;      /* the fraction's top 64 bits */
-    uint64_t rest = x.q.lo << 16;                  /* and the 48 below them */
-    uint64_t mant;
-    if (e == 0x7fff) mant = 1ull << 63 | f >> 1;   /* infinity (fraction 0) or a NaN */
-    else if (e == 0 && !f && !rest) mant = 0;
-    else {
-        mant = (e ? 1ull << 63 : 0) | f >> 1;
-        uint64_t lost = (f & 1) << 63 | rest >> 1; /* round to nearest, ties to even */
-        int up = lost > 1ull << 63 || (lost == 1ull << 63 && (mant & 1)) || (lost == 1ull << 63 && (rest & 1));
-        if (up && ++mant == 0) { mant = 1ull << 63; e++; }
-        else if (up && !e && mant >> 63) e = 1;    /* a denormal rounded up to the smallest normal */
-        se = (uint16_t)((se & 0x8000) | (e > 0x7ffe ? 0x7fff : e));
-        if ((se & 0x7fff) == 0x7fff) mant = 1ull << 63;
-    }
-    p[0] = (uint8_t)(se >> 8); p[1] = (uint8_t)se; p[2] = p[3] = 0;
-    for (int i = 0; i < 8; i++) p[4 + i] = (uint8_t)(mant >> (56 - 8 * i));
-}
-#else
-#error "AC090's FPU needs an x87 or IEEE quad long double"
-#endif
 
-/* Packed decimal: 12 bytes. Read with the host's decimal conversion. */
-static long double from_packed(const uint8_t *p) {
-    char buf[64]; int n = 0;
-    if (p[0] & 0x80) buf[n++] = '-';
-    buf[n++] = (char)('0' + (p[3] & 15));
-    buf[n++] = '.';
-    for (int i = 4; i < 12; i++) { buf[n++] = (char)('0' + (p[i] >> 4)); buf[n++] = (char)('0' + (p[i] & 15)); }
-    buf[n++] = 'e';
-    if (p[0] & 0x40) buf[n++] = '-';
-    buf[n++] = (char)('0' + (p[0] & 15)); buf[n++] = (char)('0' + (p[1] >> 4)); buf[n++] = (char)('0' + (p[1] & 15));
-    buf[n] = 0;
-    if ((p[0] & 0x7f) == 0x7f && (p[1] & 0xf0) == 0xf0) {    /* infinity or NaN */
-        int nz = 0; for (int i = 4; i < 12; i++) nz |= p[i];
-        return nz ? NAN : ((p[0] & 0x80) ? -INFINITY : INFINITY);
-    }
-    return strtold(buf, NULL);
-}
-static void to_packed(long double v, int k, uint8_t *p) {
-    memset(p, 0, 12);
-    if (isnan(v)) { p[0] = 0x7f; p[1] = 0xff; p[4] = 0xff; return; }
-    if (isinf(v)) { p[0] = (uint8_t)(signbit(v) ? 0xff : 0x7f); p[1] = 0xff; return; }
-    int digits = k > 0 ? (k > 17 ? 17 : k) : 17;
-    char buf[64];
-    snprintf(buf, sizeof buf, "%.*Le", digits - 1, fabsl(v));
-    if (signbit(v)) p[0] |= 0x80;
-    int mant[17] = { 0 }, nd = 0; const char *q = buf;
-    for (; *q && *q != 'e'; q++) if (*q >= '0' && *q <= '9' && nd < 17) mant[nd++] = *q - '0';
-    int ex = q[0] == 'e' ? atoi(q + 1) : 0;
-    if (ex < 0) { p[0] |= 0x40; ex = -ex; }
-    p[0] |= (uint8_t)(ex / 100 % 10); p[1] = (uint8_t)((ex / 10 % 10) << 4 | ex % 10);
-    p[3] = (uint8_t)mant[0];
-    for (int i = 0; i < 8; i++) p[4 + i] = (uint8_t)(mant[1 + 2 * i] << 4 | mant[2 + 2 * i]);
-}
+/* Packed decimal: 12 bytes (fpu_decimal.c) */
+static long double from_packed(const uint8_t *p) { return fx_ld(fs_from_packed(p)); }
+static void to_packed(long double v, int k, uint8_t *p) { fs_to_packed(fx_of(v), k, p); }
 
 static void fpu_cc(ac090 *c, long double v) {
     uint32_t cc = 0;
@@ -140,83 +70,8 @@ static void fpu_cc(ac090 *c, long double v) {
 }
 
 /* Round a result to the precision FPCR asks for (or the instruction's own). */
-/* Extended precision: the x87 rounds every result to a 64-bit significand
- * by itself. ARM64's quad keeps 113 bits, so a result is rounded here, to
- * nearest (ties to even) as the x87 does, down to the 68k's denormals
- * (2^-16445). Without it (1 + 2^-64) - 1 came out non-zero.
- * The quad's 112 fraction bits less the 63 the 68k keeps are its low 49,
- * for a normal number and for a quad denormal alike (whose last kept bit
- * is then 2^-16445), so the pattern is rounded as an integer there; a carry
- * goes on into the exponent, and past the largest number to infinity. The
- * same bits as frexpl, ldexpl and nearbyintl gave (3,000,000 patterns), at
- * about a seventh of the time (6 Oct 2026). */
-#if __LDBL_MANT_DIG__ == 113
-static long double ext_round(long double v) {
-    quad x; x.v = v;
-    if ((x.q.hi >> 48 & 0x7fff) == 0x7fff) return v;    /* infinity or NaN */
-    const uint64_t low = (1ull << 49) - 1, half = 1ull << 48;
-    uint64_t rest = x.q.lo & low;
-    x.q.lo &= ~low;
-    if (rest > half || (rest == half && (x.q.lo >> 49 & 1))) { x.q.lo += 1ull << 49; if (!x.q.lo) x.q.hi++; }
-    return x.v;
-}
-/* To an integer as the 68k does, also by the bits: nearbyintl took ten
- * times as long (FMOVE.L FPn,<ea> and FINT, to nearest, 6 Oct 2026). The
- * same results as truncl, floorl, ceill and nearbyintl on 32,000,000
- * patterns, in each mode and to each width.
- * Whether a magnitude whose dropped bits are rest goes up one unit (half:
- * the first dropped bit's weight; odd: the last kept bit), by FPCR's
- * rounding mode: */
-typedef unsigned __int128 u128;
-static int round_up(int mode, int neg, u128 rest, u128 half, int odd) {
-    switch (mode) {
-    case 0: return rest > half || (rest == half && odd);   /* to nearest, ties to even */
-    case 2: return neg && rest;                            /* toward minus infinity */
-    case 3: return !neg && rest;                           /* toward plus infinity */
-    }
-    return 0;                                              /* toward zero */
-}
-/* to the nearest integer, ties to even, the sign kept */
-static long double near_int(long double v) {
-    quad x; x.v = v;
-    int e = (int)(x.q.hi >> 48 & 0x7fff), neg = (int)(x.q.hi >> 63);
-    if (e == 0x7fff) return v + v;                   /* infinity; a NaN made quiet, as nearbyintl and the x87 do */
-    if (e >= 0x3fff + 112) return v;                 /* an integer already */
-    u128 sign = (u128)neg << 127, mag = ((u128)x.q.hi << 64 | x.q.lo) & ~sign;
-    if (e < 0x3fff) mag = mag > (u128)0x3ffe << 112 ? (u128)0x3fff << 112 : 0;   /* |v| < 1: 0 or 1 */
-    else {
-        int f = 0x3fff + 112 - e;                    /* the fraction's bits, 1 to 112 */
-        u128 unit = (u128)1 << f, rest = mag & (unit - 1);
-        mag -= rest;
-        if (round_up(0, neg, rest, unit >> 1, (int)(mag >> f & 1))) mag += unit;   /* a carry goes on into the exponent */
-    }
-    mag |= sign;
-    x.q.hi = (uint64_t)(mag >> 64); x.q.lo = (uint64_t)mag;
-    return x.v;
-}
-/* to an integer in lo to hi (a long, word or byte), by FPCR's mode,
- * saturating; a NaN gives hi */
-static int32_t to_int(ac090 *c, long double v, int64_t lo, int64_t hi) {
-    quad x; x.v = v;
-    int e = (int)(x.q.hi >> 48 & 0x7fff), neg = (int)(x.q.hi >> 63), mode = (int)(c->fpcr >> 4 & 3);
-    u128 m = (u128)(x.q.hi & 0xffffffffffffull) << 64 | x.q.lo;
-    if (e == 0x7fff && m) return (int32_t)hi;        /* NaN */
-    if (e >= 0x3fff + 31) return (int32_t)(neg ? lo : hi);   /* 2^31 or more, or infinity: past every range here */
-    int64_t n;
-    if (e < 0x3fff - 1) n = round_up(mode, neg, e || m, 2, 0);   /* |v| < 1/2: 0, or 1 rounding away */
-    else {
-        m |= (u128)1 << 112;
-        int f = 0x3fff + 112 - e;                    /* 82 to 113 */
-        uint64_t ip = (uint64_t)(m >> f);
-        n = (int64_t)ip + round_up(mode, neg, m & (((u128)1 << f) - 1), (u128)1 << (f - 1), (int)(ip & 1));
-    }
-    if (neg) n = -n;
-    return (int32_t)(n < lo ? lo : n > hi ? hi : n);
-}
-#else
 static long double ext_round(long double v) { return v; }
 static long double near_int(long double v) { return nearbyintl(v); }
-#endif
 static long double fpu_round(ac090 *c, long double v, int prec) {
     if (prec == 0) prec = c->fpcr >> 6 & 3;
     if (prec == 1) return (long double)(float)v;
@@ -233,43 +88,6 @@ static long double round_mode(ac090 *c, long double v) {
     return near_int(v);                             /* to nearest, ties to even */
 }
 
-static const int fsize[8] = { 4, 4, 12, 12, 2, 8, 1, 12 };   /* L S X P W D B P(dynamic k) */
-
-/* Read an operand of format fmt from <ea>. */
-static long double fpu_read_ea(ac090 *c, int mode, int reg, int fmt) {
-    int sz = fsize[fmt];
-    uint8_t b[12];
-    if (mode == 0) {                                /* Dn: L, S, W, B only */
-        uint32_t d = c->d[reg];
-        switch (fmt) {
-        case 0: return (long double)(int32_t)d;
-        case 1: { float f; memcpy(&f, &d, 4); return f; }
-        case 4: return (long double)(int16_t)d;
-        case 6: return (long double)(int8_t)d;
-        }
-        illegal(c); longjmp(c->abort, 2);
-    }
-    if (mode == 7 && reg == 4) {                    /* #immediate */
-        if (sz <= 2) { uint32_t w = fetch16(c); b[0] = (uint8_t)(w >> 8); b[1] = (uint8_t)w; if (sz == 1) b[0] = b[1]; }
-        else for (int i = 0; i < sz; i += 2) { uint32_t w = fetch16(c); b[i] = (uint8_t)(w >> 8); b[i + 1] = (uint8_t)w; }
-    } else {
-        ea_t e = ea(c, mode, reg, sz);
-        if (e.kind != EA_MEM) { illegal(c); longjmp(c->abort, 2); }
-        for (int i = 0; i < sz; i++) b[i] = (uint8_t)rd8(c, e.addr + (uint32_t)i);
-    }
-    switch (fmt) {
-    case 0: return (long double)(int32_t)((uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3]);
-    case 1: { uint32_t u = (uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3]; float f; memcpy(&f, &u, 4); return f; }
-    case 2: return from_ext(b);
-    case 3: return from_packed(b);
-    case 4: return (long double)(int16_t)(b[0] << 8 | b[1]);
-    case 5: { uint64_t u = 0; for (int i = 0; i < 8; i++) u = u << 8 | b[i]; double d; memcpy(&d, &u, 8); return d; }
-    case 6: return (long double)(int8_t)b[0];
-    }
-    return 0;
-}
-
-#if __LDBL_MANT_DIG__ != 113
 static int32_t to_int(ac090 *c, long double v, int64_t lo, int64_t hi) {
     if (isnan(v)) return (int32_t)hi;
     long double r = round_mode(c, v);
@@ -277,37 +95,15 @@ static int32_t to_int(ac090 *c, long double v, int64_t lo, int64_t hi) {
     if (r > (long double)hi) return (int32_t)hi;
     return (int32_t)(int64_t)r;
 }
-#endif
 
-/* Write FPn in format fmt to <ea> (k: packed k-factor). */
-static void fpu_write_ea(ac090 *c, int mode, int reg, int fmt, long double v, int k) {
-    uint8_t b[12];
-    int sz = fsize[fmt];
-    uint32_t u = 0;
-    switch (fmt) {
-    case 0: u = (uint32_t)to_int(c, v, INT32_MIN, INT32_MAX); break;
-    case 1: { float f = (float)v; memcpy(&u, &f, 4); break; }
-    case 4: u = (uint32_t)to_int(c, v, INT16_MIN, INT16_MAX) & 0xffff; break;
-    case 6: u = (uint32_t)to_int(c, v, INT8_MIN, INT8_MAX) & 0xff; break;
-    }
-    if (mode == 0) {
-        if (sz > 4) { illegal(c); longjmp(c->abort, 2); }
-        uint32_t m = sz == 4 ? 0xffffffffu : sz == 2 ? 0xffffu : 0xffu;
-        c->d[reg] = (c->d[reg] & ~m) | (u & m);
-        return;
-    }
-    switch (fmt) {
-    case 0: case 1: b[0] = (uint8_t)(u >> 24); b[1] = (uint8_t)(u >> 16); b[2] = (uint8_t)(u >> 8); b[3] = (uint8_t)u; break;
-    case 4: b[0] = (uint8_t)(u >> 8); b[1] = (uint8_t)u; break;
-    case 6: b[0] = (uint8_t)u; break;
-    case 2: to_ext(v, b); break;
-    case 3: case 7: to_packed(v, k, b); break;
-    case 5: { double d = (double)v; uint64_t q; memcpy(&q, &d, 8); for (int i = 0; i < 8; i++) b[i] = (uint8_t)(q >> (56 - 8 * i)); break; }
-    }
-    ea_t e = ea(c, mode, reg, sz);
-    if (e.kind != EA_MEM) { illegal(c); longjmp(c->abort, 2); }
-    for (int i = 0; i < sz; i++) wr8(c, e.addr + (uint32_t)i, b[i]);
-}
+
+/* The other formats, in and out, as C converts them on the x87 */
+static long double fv_int(int32_t n) { return (long double)n; }
+static long double fv_f32(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
+static long double fv_f64(uint64_t u) { double d; memcpy(&d, &u, 8); return d; }
+static uint32_t fv_to_f32(long double v) { float f = (float)v; uint32_t u; memcpy(&u, &f, 4); return u; }
+static uint64_t fv_to_f64(long double v) { double d = (double)v; uint64_t u; memcpy(&u, &d, 8); return u; }
+static long double fv_nan(void) { return NAN; }
 
 static long double fmovecr(int off) {
     switch (off) {
@@ -347,18 +143,86 @@ static long double fpu_default_nan(void) {
     static const uint8_t b[12] = { 0x7f, 0xff, 0, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
     return from_ext(b);
 }
+#endif
+
+static const int fsize[8] = { 4, 4, 12, 12, 2, 8, 1, 12 };   /* L S X P W D B P(dynamic k) */
+
+/* Read an operand of format fmt from <ea>. */
+static fpv fpu_read_ea(ac090 *c, int mode, int reg, int fmt) {
+    int sz = fsize[fmt];
+    uint8_t b[12];
+    if (mode == 0) {                                /* Dn: L, S, W, B only */
+        uint32_t d = c->d[reg];
+        switch (fmt) {
+        case 0: return fv_int((int32_t)d);
+        case 1: return fv_f32(d);
+        case 4: return fv_int((int16_t)d);
+        case 6: return fv_int((int8_t)d);
+        }
+        illegal(c); longjmp(c->abort, 2);
+    }
+    if (mode == 7 && reg == 4) {                    /* #immediate */
+        if (sz <= 2) { uint32_t w = fetch16(c); b[0] = (uint8_t)(w >> 8); b[1] = (uint8_t)w; if (sz == 1) b[0] = b[1]; }
+        else for (int i = 0; i < sz; i += 2) { uint32_t w = fetch16(c); b[i] = (uint8_t)(w >> 8); b[i + 1] = (uint8_t)w; }
+    } else {
+        ea_t e = ea(c, mode, reg, sz);
+        if (e.kind != EA_MEM) { illegal(c); longjmp(c->abort, 2); }
+        for (int i = 0; i < sz; i++) b[i] = (uint8_t)rd8(c, e.addr + (uint32_t)i);
+    }
+    switch (fmt) {
+    case 0: return fv_int((int32_t)((uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3]));
+    case 1: return fv_f32((uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3]);
+    case 2: return from_ext(b);
+    case 3: return from_packed(b);
+    case 4: return fv_int((int16_t)(b[0] << 8 | b[1]));
+    case 5: { uint64_t u = 0; for (int i = 0; i < 8; i++) u = u << 8 | b[i]; return fv_f64(u); }
+    case 6: return fv_int((int8_t)b[0]);
+    }
+    return fv_int(0);
+}
+
+/* Write FPn in format fmt to <ea> (k: packed k-factor). */
+static void fpu_write_ea(ac090 *c, int mode, int reg, int fmt, fpv v, int k) {
+    uint8_t b[12];
+    int sz = fsize[fmt];
+    uint32_t u = 0;
+    switch (fmt) {
+    case 0: u = (uint32_t)to_int(c, v, INT32_MIN, INT32_MAX); break;
+    case 1: u = fv_to_f32(v); break;
+    case 4: u = (uint32_t)to_int(c, v, INT16_MIN, INT16_MAX) & 0xffff; break;
+    case 6: u = (uint32_t)to_int(c, v, INT8_MIN, INT8_MAX) & 0xff; break;
+    }
+    if (mode == 0) {
+        if (sz > 4) { illegal(c); longjmp(c->abort, 2); }
+        uint32_t m = sz == 4 ? 0xffffffffu : sz == 2 ? 0xffffu : 0xffu;
+        c->d[reg] = (c->d[reg] & ~m) | (u & m);
+        return;
+    }
+    switch (fmt) {
+    case 0: case 1: b[0] = (uint8_t)(u >> 24); b[1] = (uint8_t)(u >> 16); b[2] = (uint8_t)(u >> 8); b[3] = (uint8_t)u; break;
+    case 4: b[0] = (uint8_t)(u >> 8); b[1] = (uint8_t)u; break;
+    case 6: b[0] = (uint8_t)u; break;
+    case 2: to_ext(v, b); break;
+    case 3: case 7: to_packed(v, k, b); break;
+    case 5: { uint64_t q = fv_to_f64(v); for (int i = 0; i < 8; i++) b[i] = (uint8_t)(q >> (56 - 8 * i)); break; }
+    }
+    ea_t e = ea(c, mode, reg, sz);
+    if (e.kind != EA_MEM) { illegal(c); longjmp(c->abort, 2); }
+    for (int i = 0; i < sz; i++) wr8(c, e.addr + (uint32_t)i, b[i]);
+}
+
 /* The FPSP's instructions (the transcendentals, FGETEXP, FGETMAN, FMOD,
  * FREM): a NaN out of operands that are not NaNs is an operand error. */
-static int fpsp_operr(int base, long double r, long double d, long double src) {
+static int fpsp_operr(int base, fpv r, fpv d, fpv src) {
     switch (base) {
     case 0x02: case 0x06: case 0x08: case 0x09: case 0x0a: case 0x0c: case 0x0d: case 0x0e: case 0x0f:
     case 0x10: case 0x11: case 0x12: case 0x14: case 0x15: case 0x16: case 0x19: case 0x1c: case 0x1d:
     case 0x1e: case 0x1f:
-        return isnan(r) && !isnan(src);
+        return fv_isnan(r) && !fv_isnan(src);
     case 0x21: case 0x25:
-        return isnan(r) && !isnan(src) && !isnan(d);
+        return fv_isnan(r) && !fv_isnan(src) && !fv_isnan(d);
     }
-    return (base & 0x78) == 0x30 && isnan(r) && !isnan(src);   /* FSINCOS */
+    return (base & 0x78) == 0x30 && fv_isnan(r) && !fv_isnan(src);   /* FSINCOS */
 }
 
 /* The 68040's own arithmetic (27 Oct 2026): FADD, FSUB, FMUL, FDIV and
@@ -374,16 +238,17 @@ static int fpsp_operr(int base, long double r, long double d, long double src) {
  * are ones for any precision." The sign, clear, is the one the FPSP's and
  * the soft core's (amicradle-guest's libraries/open68040) default NaN
  * has; fpu_defnan_test.c. */
-static int fpu_invalid(int base, long double r, long double d, long double src) {
+static int fpu_invalid(int base, fpv r, fpv d, fpv src) {
     switch (base) {
     case 0x04:
-        return isnan(r) && !isnan(src);
+        return fv_isnan(r) && !fv_isnan(src);
     case 0x20: case 0x22: case 0x23: case 0x24: case 0x27: case 0x28:
-        return isnan(r) && !isnan(src) && !isnan(d);
+        return fv_isnan(r) && !fv_isnan(src) && !fv_isnan(d);
     }
     return 0;
 }
 
+#if !AC090_FPU_SOFT
 /* One arithmetic operation: dst op src into FPn. */
 static void fpu_arith(ac090 *c, int opmode, long double src, int dn) {
     long double *d = &c->fp[dn], r = 0;
@@ -432,7 +297,10 @@ static void fpu_arith(ac090 *c, int opmode, long double src, int dn) {
     case 0x23: if (!fx_special(0x23, *d, src, &r)) r = *d * src; break;            /* FMUL */
     case 0x24: r = (long double)(float)(*d / src); break;        /* FSGLDIV */
     case 0x26: r = ldexpl(*d, (int)truncl(src)); break;          /* FSCALE */
-    case 0x27: r = (long double)(float)((long double)(float)*d * (long double)(float)src); break;   /* FSGLMUL */
+    case 0x27:                                                   /* FSGLMUL; of two NaNs the destination's, as the 68881 */
+        r = isnan(*d) && isnan(src) ? (long double)(float)*d     /* picks it (GCC's SSE multiply gave that, Clang's x87 one not) */
+                                    : (long double)(float)((long double)(float)*d * (long double)(float)src);
+        break;
     case 0x28: if (!fx_special(0x28, *d, src, &r)) r = *d - src; break;            /* FSUB */
     case 0x38:                                                   /* FCMP */
         /* The FPU compares; it does not subtract. Two infinities of one
@@ -459,6 +327,8 @@ static void fpu_arith(ac090 *c, int opmode, long double src, int dn) {
     *d = r;
     fpu_cc(c, r);
 }
+
+#endif
 
 /* The 32 floating-point predicates (the signalling half as the quiet one),
  * on FPSR s. Translated code tests them from a table made with this. */
@@ -507,7 +377,7 @@ static void trace_fpcr(ac090 *c, uint32_t old) {
 
 static void fpu_reset(ac090 *c) {
     uint32_t old = c->fpcr;
-    for (int i = 0; i < 8; i++) c->fp[i] = NAN;
+    for (int i = 0; i < 8; i++) c->fp[i] = fv_nan();
     c->fpcr = c->fpsr = c->fpiar = 0;
     trace_fpcr(c, old);
 }
@@ -746,14 +616,14 @@ void ac090_fpu_special_rr(ac090 *c, uint32_t ext, uint32_t pc) {
 /* An extended value in fp_tmp as three big-endian longs held as host longs
  * (FMOVEM.X and K_FTMP on a host without the x87): from them, and into
  * them. As fmovem_data does it (to_ext, from_ext). */
-static long double tmp_x_in(const ac090 *c) {
+static fpv tmp_x_in(const ac090 *c) {
     uint8_t b[12];
     uint32_t w[3];
     memcpy(w, &c->fp_tmp, 12);
     for (int k = 0; k < 3; k++) { b[4 * k] = (uint8_t)(w[k] >> 24); b[4 * k + 1] = (uint8_t)(w[k] >> 16); b[4 * k + 2] = (uint8_t)(w[k] >> 8); b[4 * k + 3] = (uint8_t)w[k]; }
     return from_ext(b);
 }
-static void tmp_x_out(ac090 *c, long double v) {
+static void tmp_x_out(ac090 *c, fpv v) {
     uint8_t b[12];
     uint32_t w[3];
     to_ext(v, b);
@@ -771,18 +641,18 @@ static void tmp_x_out(ac090 *c, long double v) {
  * NaN or infinite operand. <op>.fmt <ea>,FPn, the operand in fp_tmp: */
 void ac090_fpu_tmp_op(ac090 *c, uint32_t ext, uint32_t pc) {
     const uint8_t *t = (const uint8_t *)&c->fp_tmp;
-    uint32_t u32; uint16_t u16; uint64_t u64; float f; double d;
-    long double src = 0;
+    uint32_t u32; uint16_t u16; uint64_t u64;
+    fpv src = fv_int(0);
     switch (ext >> 10 & 7) {
-    case 0: memcpy(&u32, t, 4); src = (long double)(int32_t)u32; break;
-    case 1: memcpy(&f, t, 4); src = f; break;
-#if defined(__x86_64__) || defined(__i386__)
+    case 0: memcpy(&u32, t, 4); src = fv_int((int32_t)u32); break;
+    case 1: memcpy(&u32, t, 4); src = fv_f32(u32); break;
+#if !AC090_FPU_SOFT
     case 2: src = c->fp_tmp; break;
 #else
     case 2: src = tmp_x_in(c); break;
 #endif
-    case 4: case 6: memcpy(&u16, t, 2); src = (long double)(int16_t)u16; break;   /* a byte comes widened */
-    case 5: memcpy(&u64, t, 8); memcpy(&d, &u64, 8); src = d; break;
+    case 4: case 6: memcpy(&u16, t, 2); src = fv_int((int16_t)u16); break;   /* a byte comes widened */
+    case 5: memcpy(&u64, t, 8); src = fv_f64(u64); break;
     }
     c->fpiar = pc;
     fpu_arith(c, (int)(ext & 0x7f), src, (int)(ext >> 7 & 7));
@@ -791,16 +661,16 @@ void ac090_fpu_tmp_op(ac090 *c, uint32_t ext, uint32_t pc) {
  * host without the x87; jit.c's x87_store makes its own). */
 void ac090_fpu_tmp_store(ac090 *c, uint32_t ext, uint32_t pc) {
     uint8_t *t = (uint8_t *)&c->fp_tmp;
-    long double v = c->fp[ext >> 7 & 7];
+    fpv v = c->fp[ext >> 7 & 7];
     uint32_t u = 0;
     c->fpiar = pc;
     switch (ext >> 10 & 7) {
     case 0: u = (uint32_t)to_int(c, v, INT32_MIN, INT32_MAX); break;
     case 4: u = (uint32_t)to_int(c, v, INT16_MIN, INT16_MAX) & 0xffff; break;
     case 6: u = (uint32_t)to_int(c, v, INT8_MIN, INT8_MAX) & 0xff; break;
-    case 1: { float f = (float)v; memcpy(&u, &f, 4); break; }
+    case 1: u = fv_to_f32(v); break;
     case 2: tmp_x_out(c, v); return;
-    case 5: { double d = (double)v; memcpy(t, &d, 8); return; }
+    case 5: { uint64_t q = fv_to_f64(v); memcpy(t, &q, 8); return; }
     }
     memcpy(t, &u, 4);
 }
