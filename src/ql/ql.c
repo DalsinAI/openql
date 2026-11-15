@@ -14,6 +14,7 @@
  */
 #define _POSIX_C_SOURCE 199309L
 #include "ql.h"
+#include "../state.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -432,6 +433,42 @@ void ql_reset(ql *q, int clear_ram) {
     ac090_set_irq(&q->cpu, 0);
     ac090_reset(&q->cpu);
     q->next_frame = q->cpu.clock + QL_FRAME_CLOCKS;
+}
+
+/* ---- saved states ------------------------------------------------------ */
+
+int ql_save_state(ql *q, const char *path, const char **why) {
+    FILE *f = fopen(path, "wb");
+    if (!f) { *why = "cannot write the file"; return -1; }
+    int ok = state_write_header(f, 1, sizeof *q, q->ram_bytes, state_hash(q->rom, sizeof q->rom)) == 0 &&
+             fwrite(q, sizeof *q, 1, f) == 1 && fwrite(q->ram, 1, q->ram_bytes, f) == q->ram_bytes;
+    if (fclose(f)) ok = 0;
+    if (!ok) { *why = "cannot write the file"; remove(path); return -1; }
+    return 0;
+}
+
+int ql_load_state(ql *q, const char *path, const char **why) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { *why = "no saved state"; return -1; }
+    ql *t = malloc(sizeof *t);
+    uint8_t *ram = malloc(q->ram_bytes);
+    int ok = t && ram && state_check_header(f, 1, sizeof *q, q->ram_bytes, state_hash(q->rom, sizeof q->rom), why) == 0;
+    if (ok && (fread(t, sizeof *t, 1, f) != 1 || fread(ram, 1, q->ram_bytes, f) != q->ram_bytes)) { ok = 0; *why = "the file is cut short"; }
+    fclose(f);
+    if (ok) {
+        memcpy(q->ram, ram, q->ram_bytes);
+        state_cpu_take(&q->cpu, &t->cpu);
+        /* the chips' registers; the host's ends and the cartridges stay */
+        q->intr_pending = t->intr_pending; q->intr_mask = t->intr_mask; q->tctrl = t->tctrl;
+        q->mctrl = t->mctrl; q->mdv_sel = t->mdv_sel; q->clock_offset = t->clock_offset; q->tx_done = t->tx_done;
+        q->mc_stat = t->mc_stat; q->next_frame = t->next_frame; q->frames = t->frames; q->ipc = t->ipc;
+        q->mdv_rxrd = q->mdv_txfl = q->mdv_sync = 0;
+        q->mdv_run = -1;
+        ql_mdv_select(q);
+        ac090_set_irq(&q->cpu, q->cpu.irq);
+    }
+    free(t); free(ram);
+    return ok ? 0 : -1;
 }
 
 void ql_free(ql *q) {

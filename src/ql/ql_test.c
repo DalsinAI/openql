@@ -186,6 +186,24 @@ int main(void) {
     CHECK(cnt == 3 && !strcmp(got, "QL!"), "read ser1: %u bytes, \"%s\"", cnt, got);
     CHECK(!(ipc(&q, 1, 0, 0, 8) & 0x10), "and nothing more");
 
+    /* a saved state: the same machine, run on from it, does the same again */
+    {
+        const char *st = "ql_test_state.bin", *why = "";
+        wr(&q, 0x30000, 0x4242, 2);
+        CHECK(ql_save_state(&q, st, &why) == 0, "save a state (%s)", why);
+        ql_run(&q, q.cpu.clock + QL_FRAME_CLOCKS);
+        uint32_t pc1 = q.cpu.pc; uint64_t clk1 = q.cpu.clock;
+        wr(&q, 0x30000, 0x1111, 2);
+        CHECK(ql_load_state(&q, st, &why) == 0, "load it (%s)", why);
+        CHECK(rd(&q, 0x30000, 2) == 0x4242, "RAM as it was");
+        ql_run(&q, q.cpu.clock + QL_FRAME_CLOCKS);
+        CHECK(q.cpu.pc == pc1 && q.cpu.clock - clk1 + 64 < 128, "ran on the same (clock %llu %llu)", (unsigned long long)q.cpu.clock, (unsigned long long)clk1);
+        FILE *f = fopen(st, "r+b"); fseek(f, 24, SEEK_SET); fputc(0x55, f); fclose(f);
+        CHECK(ql_load_state(&q, st, &why) != 0 && strstr(why, "ROM"), "another ROM's state is refused (%s)", why);
+        CHECK(ql_load_state(&q, "no_such_state", &why) != 0, "no state");
+        remove(st);
+    }
+
     printf(fails ? "ql_test: %d failed\n" : "ql_test: all passed\n", fails);
     ql_free(&q);
     return fails != 0;

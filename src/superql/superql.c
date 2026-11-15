@@ -4,6 +4,7 @@
  * picture in each display mode.
  */
 #include "superql.h"
+#include "../state.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -564,6 +565,56 @@ uint64_t sql_run(superql *s, uint64_t until) {
     }
     update_irq(s);
     return c->instructions - start;
+}
+
+/* ---- saved states -------------------------------------------------------- */
+
+int sql_save_state(superql *s, const char *path, const char **why) {
+    FILE *f = fopen(path, "wb");
+    if (!f) { *why = "cannot write the file"; return -1; }
+    int ok = state_write_header(f, 2, sizeof *s, s->ram_bytes, state_hash(s->rom, s->rom_len)) == 0 &&
+             fwrite(s, sizeof *s, 1, f) == 1 && fwrite(s->ram, 1, s->ram_bytes, f) == s->ram_bytes &&
+             fwrite(s->vram, 1, SQL_VRAM_BYTES, f) == SQL_VRAM_BYTES;
+    if (fclose(f)) ok = 0;
+    if (!ok) { *why = "cannot write the file"; remove(path); return -1; }
+    return 0;
+}
+
+int sql_load_state(superql *s, const char *path, const char **why) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { *why = "no saved state"; return -1; }
+    superql *t = malloc(sizeof *t);
+    int ok = t && state_check_header(f, 2, sizeof *s, s->ram_bytes, state_hash(s->rom, s->rom_len), why) == 0;
+    if (ok && fread(t, sizeof *t, 1, f) != 1) { ok = 0; *why = "the file is cut short"; }
+    /* RAM and video RAM straight in: a file cut short past here leaves a machine to reset */
+    if (ok && (fread(s->ram, 1, s->ram_bytes, f) != s->ram_bytes || fread(s->vram, 1, SQL_VRAM_BYTES, f) != SQL_VRAM_BYTES)) {
+        ok = 0; *why = "the file is cut short: reset";
+    }
+    fclose(f);
+    if (ok) {
+        state_cpu_take(&s->cpu, &t->cpu);
+        s->ir = t->ir; s->eir = t->eir; s->kie = t->kie; s->sie = t->sie; s->eie = t->eie; s->uie = t->uie;
+        s->dmode = t->dmode; s->srate = t->srate; s->led = t->led;
+        memcpy(s->keyq, t->keyq, sizeof s->keyq); s->kq_head = t->kq_head; s->kq_tail = t->kq_tail;
+        s->next_frame = t->next_frame; s->frames = t->frames;
+        memcpy(s->nvram, t->nvram, sizeof s->nvram); s->clock_offset = t->clock_offset; s->rtc_ctl = t->rtc_ctl;
+        memcpy(s->com, t->com, sizeof s->com); s->lpt_data = t->lpt_data; s->lpt_ctl = t->lpt_ctl;
+        /* the disks in now stay in; their controllers' registers come back */
+        sql_ide *d = &s->ide;
+        d->err = t->ide.err; d->scnt = t->ide.scnt; d->sect = t->ide.sect; d->cyll = t->ide.cyll; d->cylh = t->ide.cylh;
+        d->head = t->ide.head; d->status = t->ide.status; d->ctl = t->ide.ctl; d->intrq = t->ide.intrq;
+        memcpy(d->buf, t->ide.buf, sizeof d->buf); d->pos = t->ide.pos; d->left = t->ide.left; d->writing = t->ide.writing; d->lba = t->ide.lba;
+        sql_fdc keep = s->fdc;
+        s->fdc = t->fdc;
+        for (int i = 0; i < FDC_DRIVES; i++) { uint8_t trk = s->fdc.d[i].track; s->fdc.d[i] = keep.d[i]; s->fdc.d[i].track = trk; }
+        memcpy(s->dac, t->dac, sizeof s->dac); s->sample_pending = t->sample_pending; s->next_sample = t->next_sample;
+        s->aq_head = s->aq_tail = 0;
+        s->mouse_dx = s->mouse_dy = 0; s->mouse_buttons = t->mouse_buttons; s->mouse_sent = t->mouse_sent;
+        set_low(s, t->low_rom);
+        update_irq(s);
+    }
+    free(t);
+    return ok ? 0 : -1;
 }
 
 /* ---- floppies and sound --------------------------------------------------- */

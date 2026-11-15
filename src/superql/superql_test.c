@@ -282,6 +282,21 @@ int main(void) {
         CHECK(sql_serial_space(&s, 1) == 0, "COM2 is the mouse's");
     }
 
+    /* a saved state: the same machine, run on from it, does the same again */
+    {
+        const char *st = "superql_test_state.bin", *why = "";
+        wr(&s, 0x100000, 0x4242, 2);
+        CHECK(sql_save_state(&s, st, &why) == 0, "save a state (%s)", why);
+        sql_run(&s, s.cpu.clock + SQL_FRAME_CLOCKS * 3);
+        uint32_t t1 = rd(&s, 0x28100, 4), pc1 = s.cpu.pc; uint64_t clk1 = s.cpu.clock;
+        wr(&s, 0x100000, 0x1111, 2);
+        CHECK(sql_load_state(&s, st, &why) == 0, "load it (%s)", why);
+        CHECK(rd(&s, 0x100000, 2) == 0x4242, "RAM as it was");
+        sql_run(&s, s.cpu.clock + SQL_FRAME_CLOCKS * 3);
+        CHECK(rd(&s, 0x28100, 4) == t1 && s.cpu.pc == pc1 && s.cpu.clock == clk1, "ran on the same (ticks %u %u)", rd(&s, 0x28100, 4), t1);
+        remove(st);
+    }
+
     sql_free(&s);
     remove(rom); remove(disk);
     printf("%s (%d failed)\n", fails ? "FAIL" : "ok", fails);

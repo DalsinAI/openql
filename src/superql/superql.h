@@ -128,6 +128,10 @@ uint64_t sql_run(superql *s, uint64_t until);
 /* The floppy drives (0 FLP1_, 1 FLP2_): a raw image of a QL floppy, 80
  * tracks, two sides, 9, 18 or 36 sectors of 512 a track. */
 int sql_insert_floppy(superql *s, int drive, const char *path, int read_only);
+
+/* Saved states (src/state.h): 0, or -1 with the reason in *why. */
+int sql_save_state(superql *s, const char *path, const char **why);
+int sql_load_state(superql *s, const char *path, const char **why);
 void sql_eject_floppy(superql *s, int drive);
 
 /* Sound: the DACs' output at the sample rate (sql_audio_rate: 20000 or

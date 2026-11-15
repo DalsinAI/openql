@@ -122,6 +122,10 @@ uint64_t ql_run(ql *q, uint64_t until);   /* until the CPU clock reaches until; 
  * QLAY and the MiSTer QL core keep them; a missing or empty file is a blank
  * cartridge to FORMAT, saved when the drive stops after a write, on eject
  * and at ql_free. A read-only file is a cartridge with its tab out. */
+/* Saved states (src/state.h): 0, or -1 with the reason in *why. */
+int ql_save_state(ql *q, const char *path, const char **why);
+int ql_load_state(ql *q, const char *path, const char **why);
+
 int ql_mdv_insert(ql *q, int drive, const char *path, int read_only);
 void ql_mdv_eject(ql *q, int drive);
 int ql_mdv_save(ql *q, int drive);
