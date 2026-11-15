@@ -5,7 +5,7 @@
  * the machine, its disks and the picture are chosen and QL/E is fetched.
  *
  *   openql [-L] [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]]
- *          [-d MDV [-d MDV]] [-c CART] [-p PRINTER-FILE] [-s FILE|tcp:[HOST:]PORT] [-S FILE] [-F] [-q]
+ *          [-D FOLDER] [-d MDV [-d MDV]] [-c CART] [-p PRINTER-FILE] [-s FILE|tcp:[HOST:]PORT] [-S FILE] [-F] [-q]
  *          [-l STATE] [-H SECONDS [-o FRAME.ppm] [-O STATE] [-i INPUT]...]
  *
  *   -M  the machine: ql (a 68008 QL, Minerva) or superql (the default: a
@@ -18,6 +18,8 @@
  *   -w  WIN1 on the Super QL: a QXL.WIN file is a whole QL hard disk (-R: read only)
  *   -f  a floppy image in the Super QL's FLP1_ (a second -f: FLP2_): a raw QL
  *       floppy, 720 KB, 1.44 MB or 2.88 MB (a read-only file is write protected)
+ *   -D  a folder on the host as the Super QL's FLP2_ (hostdir.h): written
+ *       back to the folder when the disk comes out or openql stops
  *   -d  a microdrive cartridge image in the QL's mdv1_ (a second -d: mdv2_):
  *       255 sectors of 686 bytes (QLAY, MiSTer); a new or empty file is a
  *       blank cartridge to FORMAT; a read-only file has its tab out
@@ -51,6 +53,7 @@
  */
 #include "ql/ql.h"
 #include "superql/superql.h"
+#include "hostdir.h"
 #include "hostser.h"
 #include "settings.h"
 #include "ui/ui.h"
@@ -508,8 +511,42 @@ static const char *rom_for(const settings *c) {
 
 static int machine_up;
 
+/* ---- a host folder in FLP2_ (hostdir.h) ---------------------------------------- */
+
+static int hd_in;                      /* the host folder's image is in FLP2_ */
+static char hd_folder[SET_PATH], hd_img[SET_PATH];
+
+static void say(uint32_t colour, const char *fmt, ...);
+
+static int hostdir_in(const char *folder) {
+    char why[300];
+    int skipped = 0;
+    snprintf(hd_img, sizeof hd_img, "%s/host-folder-flp2.img", data_dir());
+    make_dirs(data_dir());
+    if (hostdir_build(folder, hd_img, &skipped, why, sizeof why) || sql_insert_floppy(&s, 1, hd_img, 0)) {
+        say(UI_BAD, "the host folder: %s", why);
+        return -1;
+    }
+    snprintf(hd_folder, sizeof hd_folder, "%s", folder);
+    hd_in = 1;
+    if (skipped) say(UI_ACCENT, "%s in FLP2_; %d files did not fit (2.8 MB) or had names too long", folder, skipped);
+    return 0;
+}
+
+/* What the QL wrote, back to the folder; with eject, the disk comes out too. */
+static void hostdir_out(int eject) {
+    if (!hd_in) return;
+    if (eject) { sql_eject_floppy(&s, 1); hd_in = 0; }
+    else if (s.fdc.d[1].f) fflush(s.fdc.d[1].f);
+    char why[300];
+    int n = hostdir_sync(hd_img, hd_folder, why, sizeof why);
+    if (n < 0) say(UI_BAD, "the host folder: %s", why);
+    else say(UI_GOOD, "%d file%s written to %s", n, n == 1 ? "" : "s", hd_folder);
+}
+
 static void machine_down(void) {
     if (!machine_up) return;
+    if (machine == M_SUPERQL) hostdir_out(1);
     if (machine == M_QL) ql_free(&q);
     else sql_free(&s);
     machine_up = 0;
@@ -540,7 +577,8 @@ static int machine_start(const settings *c, const char *cart) {
         machine_up = 1;
         if (c->win1[0] && sql_attach_disk(&s, c->win1, c->win1_ro)) { say(UI_BAD, "cannot open WIN1_'s %s", c->win1); machine_down(); return -1; }
         for (int i = 0; i < 2; i++)
-            if (c->flp[i][0] && sql_insert_floppy(&s, i, c->flp[i], 0)) { say(UI_BAD, "cannot open FLP%d_'s %s", i + 1, c->flp[i]); machine_down(); return -1; }
+            if (c->flp[i][0] && !(i == 1 && c->host_dir[0]) && sql_insert_floppy(&s, i, c->flp[i], 0)) { say(UI_BAD, "cannot open FLP%d_'s %s", i + 1, c->flp[i]); machine_down(); return -1; }
+        if (c->host_dir[0] && hostdir_in(c->host_dir)) { machine_down(); return -1; }
         s.ser_out = serial_out;
         s.par_out = printer_out;
         title = "OpenQL · Super QL";
@@ -559,13 +597,13 @@ static int machine_start(const settings *c, const char *cart) {
         }
         SDL_SetWindowTitle(win, title);
     }
-    status[0] = 0;
+    if (!hd_in || status_colour != UI_ACCENT) status[0] = 0;
     return pic ? 0 : -1;
 }
 
 /* the launcher's rows */
 enum {
-    L_MACHINE = 1, L_RAM, L_ROM, L_WIN1, L_WIN1RO, L_QLE, L_FLP1, L_FLP2, L_MDV1, L_MDV2,
+    L_MACHINE = 1, L_RAM, L_ROM, L_WIN1, L_WIN1RO, L_QLE, L_FLP1, L_FLP2, L_HOSTDIR, L_MDV1, L_MDV2,
     L_SCALE, L_FULL, L_SPEED, L_SOUND, L_AT_START, L_FETCH, L_START, L_QUIT,
 };
 
@@ -752,6 +790,10 @@ static int launcher_rows(ui_row *rows) {
         disk_value(r, cfg.flp[0]);
         r = row(rows, &n, L_FLP2, ROW_FILE, "FLP2_ floppy");
         disk_value(r, cfg.flp[1]);
+        if (cfg.host_dir[0]) { snprintf(r->value, sizeof r->value, "the host folder, below"); r->colour = UI_DIM; r->disabled = 1; }
+        r = row(rows, &n, L_HOSTDIR, ROW_FILE, "A host folder as FLP2_");
+        if (cfg.host_dir[0]) snprintf(r->value, sizeof r->value, "%.250s", cfg.host_dir);
+        else { snprintf(r->value, sizeof r->value, "none: Enter chooses one"); r->colour = UI_DIM; }
     } else {
         r = row(rows, &n, L_MDV1, ROW_FILE, "mdv1_ cartridge");
         disk_value(r, cfg.mdv[0]);
@@ -782,6 +824,7 @@ static int launcher_rows(ui_row *rows) {
 }
 
 static void choose_file(const char *what, char *path, size_t size);
+static void choose_folder(const char *what, char *path, size_t size);
 
 /* 1: start the machine, 0: quit */
 static int launcher(void) {
@@ -847,6 +890,10 @@ static int launcher(void) {
                 if (a == UI_CLEAR) p[0] = 0; else if (a == UI_ACTIVATE) choose_file(id == L_FLP1 ? "Choose FLP1_'s floppy image" : "Choose FLP2_'s floppy image", p, SET_PATH);
                 break;
             }
+            case L_HOSTDIR:
+                if (a == UI_CLEAR) cfg.host_dir[0] = 0;
+                else if (a == UI_ACTIVATE) choose_folder("Choose a folder for FLP2_ (files written back when it comes out)", cfg.host_dir, SET_PATH);
+                break;
             case L_MDV1: case L_MDV2: {
                 char *p = cfg.mdv[id - L_MDV1];
                 if (a == UI_CLEAR) p[0] = 0; else if (a == UI_ACTIVATE) choose_file(id == L_MDV1 ? "Choose mdv1_'s cartridge (.mdv)" : "Choose mdv2_'s cartridge (.mdv)", p, SET_PATH);
@@ -877,8 +924,8 @@ static int launcher(void) {
 }
 
 /* The file browser over whatever is on the window, until a file is chosen or not. */
-static void choose_file(const char *what, char *path, size_t size) {
-    ui_browser *b = ui_browser_open(what, path[0] ? path : disk_dir());
+static void browse(const char *what, char *path, size_t size, int want_dir) {
+    ui_browser *b = ui_browser_open(what, path[0] ? path : disk_dir(), want_dir);
     if (!b) return;
     int shown = machine_up && tex;
     SDL_ShowCursor(SDL_ENABLE);
@@ -902,10 +949,13 @@ static void choose_file(const char *what, char *path, size_t size) {
     ui_browser_close(b);
 }
 
+static void choose_file(const char *what, char *path, size_t size) { browse(what, path, size, 0); }
+static void choose_folder(const char *what, char *path, size_t size) { browse(what, path, size, 1); }
+
 /* ---- the menu (F12) ------------------------------------------------------------------ */
 
 enum {
-    MN_RESUME = 1, MN_DISK1, MN_DISK2, MN_BLANK, MN_SLOT, MN_SAVE, MN_LOAD,
+    MN_RESUME = 1, MN_DISK1, MN_DISK2, MN_BLANK, MN_HOSTDIR, MN_SYNC, MN_SLOT, MN_SAVE, MN_LOAD,
     MN_PASTE, MN_SPEED, MN_SCALE, MN_FULL, MN_RESET, MN_POWER, MN_SETTINGS, MN_QUIT,
 };
 static int slot = 1;
@@ -926,12 +976,22 @@ static int menu_rows(ui_row *rows) {
         char label[40];
         snprintf(label, sizeof label, sql ? "FLP%d_" : "mdv%d_", i + 1);
         r = row(rows, &n, i ? MN_DISK2 : MN_DISK1, ROW_FILE, label);
-        if (sql ? s.fdc.d[i].f != NULL : q.mdv[i].tape != NULL) snprintf(r->value, sizeof r->value, "%s", base_name(in[0] ? in : "(in)"));
+        if (sql && i == 1 && hd_in) { snprintf(r->value, sizeof r->value, "the host folder %.200s", hd_folder); r->colour = UI_GOOD; }
+        else if (sql ? s.fdc.d[i].f != NULL : q.mdv[i].tape != NULL) snprintf(r->value, sizeof r->value, "%s", base_name(in[0] ? in : "(in)"));
         else { snprintf(r->value, sizeof r->value, "empty: Enter chooses a %s", sql ? "floppy image" : "cartridge"); r->colour = UI_DIM; }
     }
     if (!sql) {
         r = row(rows, &n, MN_BLANK, ROW_ACTION, "A new blank cartridge");
         snprintf(r->value, sizeof r->value, "in mdv%d_, to FORMAT", !q.mdv[0].tape ? 1 : 2);
+        r->colour = UI_DIM;
+    }
+    if (sql && hd_in) {
+        r = row(rows, &n, MN_SYNC, ROW_ACTION, "Write FLP2_ to the folder now");
+        snprintf(r->value, sizeof r->value, "also when it comes out");
+        r->colour = UI_DIM;
+    } else if (sql) {
+        r = row(rows, &n, MN_HOSTDIR, ROW_ACTION, "A host folder as FLP2_");
+        snprintf(r->value, sizeof r->value, "Enter chooses one");
         r->colour = UI_DIM;
     }
     if (sql) {
@@ -969,6 +1029,7 @@ static int menu_rows(ui_row *rows) {
 enum { MENU_STAY, MENU_RESUME, MENU_SETTINGS, MENU_QUIT };
 
 static void insert_disk(int drive, const char *path) {
+    if (machine == M_SUPERQL && drive == 1 && hd_in) { hostdir_out(1); cfg.host_dir[0] = 0; }
     if (machine == M_SUPERQL) {
         if (sql_insert_floppy(&s, drive, path, 0) == 0) { snprintf(cfg.flp[drive], SET_PATH, "%s", path); say(UI_GOOD, "%s in FLP%d_", base_name(path), drive + 1); }
         else say(UI_BAD, "FLP%d_ cannot take %s", drive + 1, base_name(path));
@@ -979,6 +1040,7 @@ static void insert_disk(int drive, const char *path) {
 }
 
 static void eject_disk(int drive) {
+    if (machine == M_SUPERQL && drive == 1 && hd_in) { hostdir_out(1); cfg.host_dir[0] = 0; return; }
     if (machine == M_SUPERQL) { sql_eject_floppy(&s, drive); cfg.flp[drive][0] = 0; }
     else { ql_mdv_eject(&q, drive); cfg.mdv[drive][0] = 0; }
     say(UI_TEXT, "%s%d_ is empty", machine == M_SUPERQL ? "FLP" : "mdv", drive + 1);
@@ -1042,6 +1104,20 @@ static int menu(void) {
                 insert_disk(!q.mdv[0].tape ? 0 : 1, p);   /* written when the drive stops */
                 break;
             }
+            case MN_HOSTDIR: {
+                if (a != UI_ACTIVATE) break;
+                char p[SET_PATH];
+                snprintf(p, sizeof p, "%s", cfg.host_dir);
+                choose_folder("Choose a folder for FLP2_ (files written back when it comes out)", p, sizeof p);
+                if (!p[0]) break;
+                if (s.fdc.d[1].f) eject_disk(1);
+                if (hostdir_in(p) == 0) {
+                    snprintf(cfg.host_dir, SET_PATH, "%s", p);
+                    if (status_colour != UI_ACCENT) say(UI_GOOD, "%s is FLP2_", p);
+                }
+                break;
+            }
+            case MN_SYNC: if (a == UI_ACTIVATE) hostdir_out(0); break;
             case MN_SLOT: if (a != UI_CLEAR) slot = (slot - 1 + d + 4) % 4 + 1; break;
             case MN_SAVE:
                 if (a != UI_ACTIVATE) break;
@@ -1190,7 +1266,7 @@ static int run_window(void) {
 /* ---- main ------------------------------------------------------------------------- */
 
 static void usage(void) {
-    fprintf(stderr, "usage: openql [-L] [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]]\n"
+    fprintf(stderr, "usage: openql [-L] [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]] [-D FOLDER]\n"
                     "              [-d MDV [-d MDV]] [-c CART] [-p PRINTER-FILE] [-s FILE|tcp:[HOST:]PORT] [-S FILE] [-F] [-q]\n"
                     "              [-l STATE] [-H SECONDS [-o FRAME.ppm] [-O STATE] [-i key:NAME@T | -i type:TEXT@T]...]\n");
 }
@@ -1212,7 +1288,7 @@ int main(int argc, char **argv) {
     settings_default(&line);
     line.scale = cfg.scale;
     line.sound = cfg.sound;
-    while ((opt = getopt(argc, argv, "LM:r:m:w:Rf:d:c:p:s:S:FqH:o:i:l:O:h")) != -1) {
+    while ((opt = getopt(argc, argv, "LM:r:m:w:Rf:D:d:c:p:s:S:FqH:o:i:l:O:h")) != -1) {
         any = 1;
         switch (opt) {
         case 'L': force_launcher = 1; break;
@@ -1232,6 +1308,7 @@ int main(int argc, char **argv) {
         case 'w': snprintf(line.win1, SET_PATH, "%s", optarg); break;
         case 'R': line.win1_ro = 1; break;
         case 'f': if (nflp < 2) snprintf(line.flp[nflp++], SET_PATH, "%s", optarg); break;
+        case 'D': snprintf(line.host_dir, SET_PATH, "%s", optarg); break;
         case 'd': if (nmdv < 2) snprintf(line.mdv[nmdv++], SET_PATH, "%s", optarg); break;
         case 'q': quiet = 1; break;
         case 'c': cart = optarg; break;

@@ -178,6 +178,7 @@ struct ui_browser {
     ui_list list;
     ui_row *rows;
     char msg[160];
+    int want_dir;               /* choosing a folder: "this folder" is the first row */
 };
 
 static int by_name(const void *a, const void *b) {
@@ -238,6 +239,12 @@ static void load(ui_browser *b) {
 #endif
     }
     qsort(b->e, (size_t)b->n, sizeof *b->e, by_name);
+    if (b->want_dir && b->dir[0]) {             /* this folder, first */
+        add(b, "", 1, 0);
+        memmove(b->e + 1, b->e, (size_t)(b->n - 1) * sizeof *b->e);
+        memset(&b->e[0], 0, sizeof b->e[0]);
+        b->e[0].dir = 2;
+    }
 #ifdef _WIN32
 rows:
 #endif
@@ -246,6 +253,12 @@ rows:
         memset(r, 0, sizeof *r);
         r->id = i;
         r->kind = ROW_ACTION;
+        if (b->e[i].dir == 2) {
+            snprintf(r->label, sizeof r->label, "[ use this folder ]");
+            r->colour = UI_ACCENT;
+            snprintf(r->value, sizeof r->value, "%s", "");
+            continue;
+        }
         snprintf(r->label, sizeof r->label, "%.60s%s", b->e[i].name, b->e[i].dir && strcmp(b->e[i].name, "..") ? "/" : "");
         if (b->e[i].dir) snprintf(r->value, sizeof r->value, "%s", strcmp(b->e[i].name, "..") ? "folder" : "up");
         else if (b->e[i].size >= 1 << 20) snprintf(r->value, sizeof r->value, "%.1f MB", b->e[i].size / 1048576.0);
@@ -277,9 +290,10 @@ static void go_up(ui_browser *b) {
     for (int i = 0; i < b->n; i++) if (!strcmp(b->e[i].name, was)) b->list.sel = i;   /* where we came from */
 }
 
-ui_browser *ui_browser_open(const char *title, const char *start) {
+ui_browser *ui_browser_open(const char *title, const char *start, int want_dir) {
     ui_browser *b = calloc(1, sizeof *b);
     if (!b) return NULL;
+    b->want_dir = want_dir;
     snprintf(b->title, sizeof b->title, "%s", title);
     char dir[1024] = "", pick[256] = "";
     if (start && *start) {
@@ -313,7 +327,8 @@ void ui_browser_draw(ui_browser *b) {
     ui_rect(60, 88, UI_W - 120, 1, 0x40e8ecf2u);
     if (b->msg[0]) ui_text(60, 100, b->msg, UI_BAD, 1);
     ui_list_draw(&b->list, b->rows, b->n, 50, 96, UI_W - 100, UI_H - 96 - 70, 0);
-    ui_text(60, UI_H - 58, "Enter choose   Backspace up a folder   Esc cancel   a letter: jump", UI_DIM, 1);
+    ui_text(60, UI_H - 58, b->want_dir ? "Enter opens a folder   Backspace up a folder   Esc cancel"
+                                       : "Enter choose   Backspace up a folder   Esc cancel   a letter: jump", UI_DIM, 1);
 }
 
 int ui_browser_event(ui_browser *b, const SDL_Event *e, char *out, size_t outsz) {
@@ -333,11 +348,18 @@ int ui_browser_event(ui_browser *b, const SDL_Event *e, char *out, size_t outsz)
     if (a != UI_ACTIVATE && a != UI_RIGHT) return 0;
     if (b->list.sel < 0 || b->list.sel >= b->n) return 0;
     entry *en = &b->e[b->list.sel];
+    if (en->dir == 2) {                          /* this folder */
+        if (a != UI_ACTIVATE) return 0;
+        snprintf(out, outsz, "%s", b->dir);
+        size_t n = strlen(out);
+        if (n > 1 && out[n - 1] == '/' && !(n == 3 && out[1] == ':')) out[n - 1] = 0;
+        return 1;
+    }
     if (!strcmp(en->name, "..")) { go_up(b); return 0; }
     char p[1400];
     snprintf(p, sizeof p, "%s%s", b->dir, en->name);
     if (en->dir) { set_dir(b, p); return 0; }
-    if (a == UI_RIGHT) return 0;            /* right arrow only opens folders */
+    if (a == UI_RIGHT || b->want_dir) return 0;   /* right arrow only opens folders; a folder is wanted */
     snprintf(out, outsz, "%s", p);
     return 1;
 }

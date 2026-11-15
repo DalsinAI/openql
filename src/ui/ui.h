@@ -62,7 +62,7 @@ int ui_mouse(int wx, int wy, int *cx, int *cy);
 /* ---- choosing a file -------------------------------------------------------- */
 
 typedef struct ui_browser ui_browser;
-ui_browser *ui_browser_open(const char *title, const char *start);   /* start: a file or a folder */
+ui_browser *ui_browser_open(const char *title, const char *start, int want_dir);   /* start: a file or a folder */
 void ui_browser_draw(ui_browser *b);
 /* 1: chosen (the path in out), -1: cancelled, 0: still choosing */
 int ui_browser_event(ui_browser *b, const SDL_Event *e, char *out, size_t outsz);

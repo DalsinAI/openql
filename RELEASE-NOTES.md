@@ -18,6 +18,7 @@ New since v0.1.0:
 
 - **A launcher**: `openql` on its own opens a screen to choose the machine, memory, disks, picture, speed and sound, and to **Get QL/E** (downloaded from sinclairql.net and put in WIN1_ with the settings it wants) or fetch the ROMs. It remembers the choices.
 - **A menu on F12**: swap floppies and cartridges (or make a blank one), saved states in four slots, type the clipboard in (also Ctrl+Shift+V), speed (2x, 4x, as fast as it goes; Ctrl+F8), the picture's scaling (4:3, whole pixels, fill), full screen, reset, back to the launcher.
+- **A host folder as a disk**: `-D FOLDER` (or the launcher, or the menu) puts a folder on the host in the Super QL's FLP2_ as a QL disk, and writes what the QL saved back to it when the disk comes out.
 - **Saved states** on both machines, also from the command line: `-l FILE` starts from one, `-O FILE` saves one after `-H`.
 
 - **Serial input** on both machines: `-S FILE` sends a file in on ser1 (COM1), and `-s tcp:PORT` or `-s tcp:HOST:PORT` makes ser1 a null-modem cable over TCP, both ways, between two openqls or to a terminal program.

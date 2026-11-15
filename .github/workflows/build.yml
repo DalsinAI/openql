@@ -57,6 +57,14 @@ jobs:
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ff0000 100000              # its windows
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" 00ff00 200 0,408,1024,512  # the line typed, in #0
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ffffff 60 516,2,600,24     # the 42, in #1
+      - name: A host folder as FLP2_ on the Super QL, written back
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms" XDG_DATA_HOME="$RUNNER_TEMP/data"
+          mkdir -p "$RUNNER_TEMP/folder"
+          printf '10 PRINT "FROM THE HOST"\n' > "$RUNNER_TEMP/folder/hello.bas"
+          ./openql -D "$RUNNER_TEMP/folder" -H 26 -i 'type:LOAD flp2_hello_bas\n@8' -i 'type:20 PRINT 6*7\n@11' -i 'type:SAVE_O flp2_hello_bas\n@14' -i 'type:SAVE flp2_new_bas\n@18'
+          grep -q "PRINT 6\*7" "$RUNNER_TEMP/folder/hello.bas"
+          grep -q "FROM THE HOST" "$RUNNER_TEMP/folder/new_bas"
       - name: Serial input reaches SuperBASIC on both machines
         run: |
           export OPENQL_ROMS="$RUNNER_TEMP/roms"
