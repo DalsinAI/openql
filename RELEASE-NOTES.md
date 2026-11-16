@@ -16,6 +16,12 @@ No ROM is included. Fetch them on request with `openql-fetch-roms minerva` and `
 
 Not yet: the QL's own network (QLAN) wire.
 
+New in this release candidate, since rc3 (each is described in full below):
+
+- The debugger (Ctrl+F11, or the F12 menu), and `-b ADDR` without a window.
+- High colour from the start on the Super QL: 512 x 256 or 1024 x 512 in 16-bit colour.
+- The host folder is now WIN2_ on the Super QL, a hard disk of up to 2 GB beside WIN1_, and DOS1_ on the QL.
+
 New since v0.1.0:
 
 - **A debugger** (Ctrl+F11, or the F12 menu): the CPU's registers (editable), breakpoints, step, step over, run to a line, and the code and memory, in a window of the host's own controls. Its disassembler knows the 68000 to the 68040, the 68040's FPU and MMU instructions too, and reads through SMSQ/E's MMU tables as the CPU does. `-b ADDR` stops a run without a window at an address and prints the registers and the code.
