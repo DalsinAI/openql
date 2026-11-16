@@ -57,7 +57,7 @@ With options, openql starts that machine straight away:
 | `-m RAM` | KB on the QL (128 to 896, 640 by default), MB on the Super QL (up to 128) |
 | `-w FILE`, `-R` | The Super QL's WIN1: a QXL.WIN file; `-R` read only |
 | `-f FILE` | A floppy image in the Super QL's FLP1_, a second in FLP2_: raw, 720 KB, 1.44 MB or 2.88 MB. A read-only file is a write-protected disk; an empty file is a blank disk to FORMAT |
-| `-D FOLDER` | A folder on the host as the Super QL's FLP2_: its files (up to 2.8 MB) are a QL disk, `game.bas` as `game_bas` and a folder as a directory. What the QL saves there is written back to the folder when the disk comes out or openql stops: changed files under their own names, new ones under the QL's. An executable's data space is kept as an `XTcc` trailer, as uQLx and sQLux keep it. Files deleted on the QL stay on the host |
+| `-D FOLDER` | A folder on the host as a drive, `game.bas` as `game_bas` and a folder `progs` as `progs_`. On the Super QL it is **WIN2_**, a hard disk of 64 MB to 2 GB (twice what the folder holds, and 32 MB more) on the IDE slave, which openql points WIN2_ at as `WIN_DRIVE 2,1` would. What the QL saves there is written back to the folder when openql stops, the folder changes, or the F12 menu says so: changed files under their own names, new ones under the QL's, each written whole beside the old one and then renamed over it. A file changed on the host meanwhile is kept, and the QL's copy goes beside it as `NAME.from-ql`. On the QL it is **DOS1_**, openql's own small driver in the ROM port: LOAD, SAVE, DIR, COPY, EXEC, DELETE and the rest work on the folder's files as they go, each written back whole when its channel closes; DELETE moves a file into the folder's `.openql-deleted`. An executable's data space is kept as an `XTcc` trailer, as uQLx and sQLux keep it |
 | `-d FILE` | A microdrive cartridge in the QL's mdv1_, a second in mdv2_: a `.mdv` image of 255 sectors of 686 bytes (QLAY, MiSTer). A new or empty file is a blank cartridge to FORMAT; a read-only file has its write-protect tab out. Writes are saved to the file when the drive stops |
 | `-c FILE` | A 16 KB cartridge in the QL's ROM port |
 | `-s FILE` | ser1's (COM1's) output goes to a file |
@@ -71,7 +71,7 @@ With options, openql starts that machine straight away:
 | `-i key:NAME@T`, `-i type:TEXT@T` | With `-H`, press a key (`f1` to `f10`, `enter`, `esc`, `space`, `tab`, the arrows) or type text (`\n` for ENTER) at T seconds, on either machine |
 | `-b ADDR` | With `-H`, stop when the CPU reaches ADDR (hex), print the registers and the code there, and end (status 3 if it never got there) |
 
-In the window, **F12** opens openql's menu: put a disk or cartridge in or take it out (or a new blank cartridge on the QL, or a host folder as FLP2_ on the Super QL), save the machine's state in one of four slots and load it again, type the host's clipboard in, change the speed (real time, 2x, 4x, or as fast as it goes) and the picture (4:3 at the window's size, 4:3 in whole pixels, or filling the window), go full screen, choose the Super QL's display for the next reset, reset, open the debugger, or go back to the launcher. A saved state is the machine with its memory, for the same openql, ROM and memory size; the disks in the drives are not part of it.
+In the window, **F12** opens openql's menu: put a disk or cartridge in or take it out (or a new blank cartridge on the QL), choose or remove the host folder (WIN2_ on the Super QL, which then starts again to find it; DOS1_ on the QL, at once) or write WIN2_'s files back now, save the machine's state in one of four slots and load it again, type the host's clipboard in, change the speed (real time, 2x, 4x, or as fast as it goes) and the picture (4:3 at the window's size, 4:3 in whole pixels, or filling the window), go full screen, choose the Super QL's display for the next reset, reset, open the debugger, or go back to the launcher. A saved state is the machine with its memory, for the same openql, ROM and memory size; the disks in the drives are not part of it.
 
 Also: **F11** full screen, **Ctrl+Shift+V** types the clipboard in, **Ctrl+F8** as fast as it goes (again: back), **Ctrl+F12** the reset button, **Ctrl+Shift+F12** a power cycle, **Ctrl+F10** pause, **Ctrl+F11** the debugger, **Ctrl+F9** takes the disk out of FLP1_ or the cartridge out of mdv1_ (with Shift, FLP2_ or mdv2_). Drop a floppy or microdrive image on the window to put it in FLP1_ or mdv1_ (hold Shift for the second drive). The QL has no Backspace or Delete, so those keys send CTRL with left or right, as QL typists did. F6 to F10 are SHIFT with F1 to F5. On the Super QL the host's pointer over the window moves SMSQ/E's pointer.
 
@@ -88,7 +88,7 @@ Addresses are the CPU's: with SMSQ/E's MMU on, the debugger reads through the 68
 
 ## What is not done yet
 
-A host folder on the QL (which has only its microdrives) and as a hard disk (WIN2_); the QL's disks, and the QL's own network (QLAN) wire: two machines talk through ser1 over TCP instead. Displays larger than 1024 x 512: that is the most the Q40 and Q60 boards had, and the most SMSQ/E's Q40 build drives. The QL's BEEP plays its pitch only (no sweeps or fuzz). See `docs/` for each board.
+The QL's disk interfaces, and the QL's own network (QLAN) wire: two machines talk through ser1 over TCP instead. Displays larger than 1024 x 512: that is the most the Q40 and Q60 boards had, and the most SMSQ/E's Q40 build drives. The QL's BEEP plays its pitch only (no sweeps or fuzz). See `docs/` for each board.
 
 ## Layout
 
@@ -99,7 +99,8 @@ A host folder on the QL (which has only its microdrives) and as a hard disk (WIN
 | `src/settings.c` | The launcher's settings file and openql's folders |
 | `src/debug.c`, `src/cpu/dis68k.c` | The debugger's breakpoints, steps, registers and memory; the 68000 to 68040 disassembler |
 | `src/state.h` | Saved states' header and the CPU's part |
-| `src/hostser.c`, `src/hostdir.c` | ser1's host end (a file, TCP); a host folder as a QLWA disk |
+| `src/hostser.c`, `src/hostdir.c` | ser1's host end (a file, TCP); a host folder as a QLWA disk (WIN2_) |
+| `src/ql/qldos.c`, `src/ql/qldos.s` | DOS1_: the QL's host-folder driver (the 68000 part is assembled by `tools/build-qldos-rom` into `qldos_rom.h`) |
 | `src/ql/` | The QL board, its cases (`ql_test.c`) and `qlrun`, a headless boot runner that types keys |
 | `src/superql/` | The Super QL board and its cases |
 | `src/cpu/` | AC090's 68k core (interpreter) |

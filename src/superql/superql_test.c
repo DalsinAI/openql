@@ -117,7 +117,7 @@ int main(void) {
     wf = fopen(disk, "wb");
     if (!wf || fwrite(sec512, 1, sizeof sec512, wf) != sizeof sec512) return 1;
     fclose(wf);
-    CHECK(sql_attach_disk(&s, disk, 0) == 0, "attach");
+    CHECK(sql_attach_disk(&s, 0, disk, 0) == 0, "attach");
     uint32_t io = 0xff400000;
 #define IDE(port) (io + ((port) << 2) + 1)
     wr(&s, IDE(0x1f6), 0xe0, 1);                      /* master, LBA */
@@ -145,6 +145,45 @@ int main(void) {
     wr(&s, IDE(0x1f7), 0xec, 1);
     CHECK(rd(&s, IDE(0x1f7), 1) == 0, "no slave");
 
+    /* a slave beside the master: each answers when selected, and WIN2_ is pointed at it */
+    static const char *disk2 = "superql_test_disk2.img";
+    static uint8_t sec2[512 * 4];
+    memset(sec2, 0x77, sizeof sec2);
+    memcpy(sec2, "SLAV", 4);
+    wf = fopen(disk2, "wb");
+    if (!wf || fwrite(sec2, 1, sizeof sec2, wf) != sizeof sec2) return 1;
+    fclose(wf);
+    CHECK(sql_win2_slave(&s) == 1, "no slave: nothing to do");
+    CHECK(sql_attach_disk(&s, 1, disk2, 0) == 0, "attach the slave");
+    wr(&s, IDE(0x1f6), 0xf0, 1);                      /* the slave, LBA */
+    wr(&s, IDE(0x1f2), 1, 1);
+    wr(&s, IDE(0x1f3), 0, 1); wr(&s, IDE(0x1f4), 0, 1); wr(&s, IDE(0x1f5), 0, 1);
+    wr(&s, IDE(0x1f7), 0x20, 1);
+    CHECK(rd(&s, IDE(0x1f7), 1) & 0x08, "the slave reads");
+    uint32_t s0 = rd(&s, io + (0x1f0 << 2), 2);
+    CHECK(s0 == ('S' << 8 | 'L'), "the slave's own sector 0 (%04x)", s0);
+    for (int i = 1; i < 256; i++) rd(&s, io + (0x1f0 << 2), 2);
+    wr(&s, IDE(0x1f6), 0xe0, 1);                      /* the master again: its status, not the slave's */
+    CHECK(rd(&s, IDE(0x1f7), 1) & 0x40, "the master answers (%02x)", rd(&s, IDE(0x1f7), 1));
+    wr(&s, IDE(0x1f7), 0xec, 1);
+    for (int i = 0; i < 60; i++) rd(&s, io + (0x1f0 << 2), 2);
+    lo = rd(&s, io + (0x1f0 << 2), 2); hi = rd(&s, io + (0x1f0 << 2), 2);
+    CHECK((hi << 16 | lo) == 8, "the master still identifies as itself (%u)", hi << 16 | lo);
+    /* SMSQ/E's WIN driver linkage, as hd_init leaves it: WIN2_ gets the slave once */
+    CHECK(sql_win2_slave(&s) == 0, "no WIN driver linked yet");
+    uint32_t lk = 0x100000;
+    memcpy(s.ram + lk + 0x42, "\0\3WIN", 5);
+    s.ram[lk + 0x4c] = 2;
+    memset(s.ram + lk + 0x250, 0xff, 8);
+    s.ram[lk + 0x250] = 0;
+    CHECK(sql_win2_slave(&s) == 1 && s.ram[lk + 0x231] == 1 && s.ram[lk + 0x251] == 0, "WIN2_ is target 1, partition 0");
+    s.win2_set = 0;
+    s.ram[lk + 0x231] = 0; s.ram[lk + 0x251] = 3;     /* the user's own WIN_DRIVE 2,0,3 */
+    CHECK(sql_win2_slave(&s) == 1 && s.ram[lk + 0x231] == 0 && s.ram[lk + 0x251] == 3, "WIN_DRIVE's choice stays");
+    memset(s.ram + lk, 0, 0x300);
+    sql_detach_disk(&s, 1);
+    remove(disk2);
+
     /* A QXL.WIN from QPC names no geometry: sector 0 shows the drive's, and the file keeps its zeros */
     memset(sec512, 0, 512);
     memcpy(sec512, "QLWA", 4);
@@ -170,7 +209,7 @@ int main(void) {
     fclose(wf);
     wr(&s, IDE(0x1f7), 0x20, 1);
     for (int i = 0; i < 256; i++) rd(&s, io + (0x1f0 << 2), 2);
-    CHECK(s.ide.spt == 17 && s.ide.heads == 4, "a Q40 disk's geometry is the drive's (%u %u)", s.ide.spt, s.ide.heads);
+    CHECK(s.ide[0].spt == 17 && s.ide[0].heads == 4, "a Q40 disk's geometry is the drive's (%u %u)", s.ide[0].spt, s.ide[0].heads);
 
     /* the serial mouse on COM2, as SMSQ/E's com_check and com_mouse find it */
 #define COM2(r) (0xff400000 + ((0x2f8 + (r)) << 2) + 1)

@@ -15,15 +15,25 @@
 #endif
 
 #define SECT 512
-#define SPT 36
-#define HEADS 2
-#define CYLS 80
-#define SECTORS (SPT * HEADS * CYLS)        /* 5760: 2.88 MB */
-#define SCTG 3                              /* sectors a group, as SMSQ/E formats an ED disk */
-#define NGRP (SECTORS / SCTG)
 #define HDR 64
 #define NAMELEN 36
 #define QL_EPOCH 283996800L                 /* 1961-01-01 to 1970-01-01, in seconds */
+#define MB (1024LL * 1024LL)
+
+/* Offsets past 2 GB: long is 32 bits on Windows. */
+#ifdef _WIN32
+#define dseek(f, o) _fseeki64(f, (__int64)(o), SEEK_SET)
+#define dsize(f) (_fseeki64(f, 0, SEEK_END) ? -1 : (int64_t)_ftelli64(f))
+#else
+#define dseek(f, o) fseeko(f, (off_t)(o), SEEK_SET)
+#define dsize(f) (fseeko(f, 0, SEEK_END) ? -1 : (int64_t)ftello(f))
+#endif
+
+/* A disk's shape: the floppy's, or a hard disk's sized to the folder. */
+typedef struct geom {
+    unsigned spt, heads, cyls, sctg;
+    uint32_t sectors;
+} geom;
 
 /* QLWA's header */
 enum {
@@ -57,9 +67,16 @@ typedef struct node {
 } node;
 
 typedef struct build {
-    uint8_t *img;
+    geom g;
+    unsigned ngrp;
+    uint8_t *img;               /* the header and the map */
+    size_t img_len;
+    FILE *f;                    /* the image: files go straight in at their groups */
     unsigned next_group;        /* the next free group, handed out in order */
     int skipped;
+    int failed;                 /* a write failed */
+    uint64_t bytes;             /* what the files hold, to size a hard disk */
+    uint32_t max_file;          /* the largest a file may be */
 } build;
 
 static void ql_char_name(char *out, const char *in) {
@@ -104,7 +121,7 @@ static node *scan(const char *folder, const char *prefix, int depth, build *b) {
         } else {
             FILE *f = fopen(n->host, "rb");
             long size = st.st_size;
-            if (!f || size > SECTORS * SECT) { if (f) fclose(f); b->skipped++; free(n); continue; }
+            if (!f || (uint64_t)size > b->max_file) { if (f) fclose(f); b->skipped++; free(n); continue; }
             n->data = malloc((size_t)size + HDR);
             if (!n->data || fread(n->data + HDR, 1, (size_t)size, f) != (size_t)size) { fclose(f); free(n->data); free(n); b->skipped++; continue; }
             fclose(f);
@@ -115,6 +132,7 @@ static node *scan(const char *folder, const char *prefix, int depth, build *b) {
                 size -= 8;
             }
             n->len = (uint32_t)size + HDR;
+            b->bytes += n->len;
         }
         n->next = head;
         head = n;
@@ -135,7 +153,8 @@ static void header(uint8_t *h, const node *n) {
     put16(h + H_FLID, (unsigned)n->first);
 }
 
-static unsigned groups_for(uint32_t len) { return (len + SCTG * SECT - 1) / (SCTG * SECT); }
+static unsigned gbytes(const build *b) { return b->g.sctg * SECT; }
+static unsigned groups_for(const build *b, uint32_t len) { return (len + gbytes(b) - 1) / gbytes(b); }
 
 /* A directory's entries, once its files have their first groups. */
 static void make_dir_data(node *dir) {
@@ -149,8 +168,8 @@ static void make_dir_data(node *dir) {
 
 /* Hand out groups: a file's groups follow each other, chained in the map. */
 static int place(build *b, uint32_t len) {
-    unsigned need = groups_for(len ? len : 1);
-    if (b->next_group + need > NGRP) return -1;
+    unsigned need = groups_for(b, len ? len : 1);
+    if (b->next_group + need > b->ngrp) return -1;
     int first = (int)b->next_group;
     uint8_t *map = b->img + QWA_GMAP;
     for (unsigned g = 0; g < need; g++) put16(map + 2 * (first + g), g + 1 < need ? first + g + 1 : 0);
@@ -181,20 +200,45 @@ static void write_tree(build *b, node *list) {
     for (node *n = list; n; n = n->next) {
         if (n->dir) write_tree(b, n->kids);
         header(n->data, n);
-        /* follow the map: the groups were handed out in a row */
-        memcpy(b->img + (size_t)n->first * SCTG * SECT, n->data, n->len);
+        /* the groups were handed out in a row */
+        if (dseek(b->f, (int64_t)n->first * gbytes(b)) || fwrite(n->data, 1, n->len, b->f) != n->len) b->failed = 1;
     }
 }
 
-int hostdir_build(const char *folder, const char *image, int *skipped, char *why, size_t whysz) {
+static int build_image(const char *folder, const char *image, int hard, int *skipped, char *why, size_t whysz) {
     struct stat st;
     if (stat(folder, &st) || !S_ISDIR(st.st_mode)) { say(why, whysz, "%s is not a folder", folder); return -1; }
     build b = { 0 };
-    b.img = calloc(SECTORS, SECT);
-    if (!b.img) { say(why, whysz, "no memory", NULL); return -1; }
+    node root = { 0 };
+    root.dir = 1;
+    b.max_file = hard ? (uint32_t)(HOSTDIR_HD_MAX_MB * MB / 2) : 80u * 2 * 36 * SECT;
+    root.kids = scan(folder, "", 0, &b);
+    if (hard) {
+        /* room for what is there twice over and 32 MB more, at least 64 MB:
+         * whole cylinders of 16 heads and 63 sectors, the drive's geometry */
+        uint64_t want = b.bytes * 2 + 32 * MB;
+        if (want < HOSTDIR_HD_MIN_MB * MB) want = HOSTDIR_HD_MIN_MB * MB;
+        if (want > HOSTDIR_HD_MAX_MB * MB) want = HOSTDIR_HD_MAX_MB * MB;
+        b.g.spt = 63; b.g.heads = 16;
+        b.g.cyls = (unsigned)((want / SECT + 1007) / 1008);
+        b.g.sectors = b.g.cyls * 1008u;
+        b.g.sctg = 4;                                   /* a group number is a word */
+        while (b.g.sectors / b.g.sctg > 65535) b.g.sctg *= 2;
+    } else {
+        b.g = (geom){ 36, 2, 80, 3, 80 * 2 * 36 };      /* a 2.88 MB floppy, as SMSQ/E formats one */
+    }
+    b.ngrp = b.g.sectors / b.g.sctg;
+    unsigned map_bytes = QWA_GMAP + 2 * b.ngrp, map_sectors = (map_bytes + SECT - 1) / SECT;
+    unsigned map_groups = (map_sectors + b.g.sctg - 1) / b.g.sctg;
+    b.img_len = (size_t)map_groups * gbytes(&b);
+    b.img = calloc(1, b.img_len);
+    b.f = fopen(image, "wb");
+    if (!b.img || !b.f) {
+        free(b.img); if (b.f) fclose(b.f); free_tree(root.kids);
+        say(why, whysz, b.f ? "no memory" : "cannot write %s", image);
+        return -1;
+    }
     uint8_t *h = b.img;
-    unsigned map_bytes = QWA_GMAP + 2 * NGRP, map_sectors = (map_bytes + SECT - 1) / SECT;
-    unsigned map_groups = (map_sectors + SCTG - 1) / SCTG;
     put32(h + QWA_ID, 0x514c5741);                  /* QLWA */
     const char *base = strrchr(folder, '/');
     const char *bs = strrchr(folder, '\\');
@@ -208,37 +252,35 @@ int hostdir_build(const char *folder, const char *image, int *skipped, char *why
     put16(h + QWA_NAME, (unsigned)nl);
     memcpy(h + QWA_NAME + 2, name, 20);
     put32(h + QWA_UCHK, (uint32_t)time(NULL));
-    put16(h + QWA_SCTG, SCTG);
-    put16(h + QWA_SCTT, SPT);
-    put16(h + QWA_TRKC, HEADS);
-    put16(h + QWA_CYLD, CYLS);
-    put16(h + QWA_NGRP, NGRP);
+    put16(h + QWA_SCTG, b.g.sctg);
+    put16(h + QWA_SCTT, b.g.spt);
+    put16(h + QWA_TRKC, b.g.heads);
+    put16(h + QWA_CYLD, b.g.cyls);
+    put16(h + QWA_NGRP, b.ngrp);
     put16(h + QWA_SCTM, map_sectors);
     put16(h + QWA_NMAP, 1);
     for (unsigned g = 0; g < map_groups; g++) put16(h + QWA_GMAP + 2 * g, g + 1 < map_groups ? g + 1 : 0);
     b.next_group = map_groups;
 
-    node root = { 0 };
-    root.dir = 1;
-    root.kids = scan(folder, "", 0, &b);
     /* the root directory goes first after the map, as FORMAT puts it; its
      * size is known once the files that fit are known, so its groups are
      * taken for the most it could need and given back after */
     unsigned root_at = b.next_group;
     unsigned n_top = 0;
     for (node *k = root.kids; k; k = k->next) n_top++;
-    b.next_group += groups_for(HDR + n_top * HDR);
+    unsigned reserved = groups_for(&b, HDR + n_top * HDR);
+    b.next_group += reserved;
     place_tree(&b, &root.kids);
     write_tree(&b, root.kids);
     make_dir_data(&root);
-    unsigned rg = groups_for(root.len);
+    unsigned rg = groups_for(&b, root.len);
     for (unsigned g = 0; g < rg; g++) put16(h + QWA_GMAP + 2 * (root_at + g), g + 1 < rg ? root_at + g + 1 : 0);
-    memcpy(b.img + (size_t)root_at * SCTG * SECT, root.data, root.len);
+    if (dseek(b.f, (int64_t)root_at * gbytes(&b)) || fwrite(root.data, 1, root.len, b.f) != root.len) b.failed = 1;
     put16(h + QWA_ROOT, root_at);
     put32(h + QWA_RLEN, root.len);
     /* the groups the root did not need, and those after the files, are free */
-    unsigned first_free = 0, last = 0, nfree = 0, reserved = groups_for(HDR + n_top * HDR);
-    for (unsigned g = root_at + rg; g < NGRP; g++) {
+    unsigned first_free = 0, last = 0, nfree = 0;
+    for (unsigned g = root_at + rg; g < b.ngrp; g++) {
         if (g >= root_at + reserved && g < b.next_group) continue;   /* a file's */
         if (!first_free) first_free = g; else put16(h + QWA_GMAP + 2 * last, g);
         put16(h + QWA_GMAP + 2 * g, 0);
@@ -250,35 +292,47 @@ int hostdir_build(const char *folder, const char *image, int *skipped, char *why
     free(root.data);
     free_tree(root.kids);
 
-    FILE *f = fopen(image, "wb");
-    int ok = f && fwrite(b.img, SECT, SECTORS, f) == SECTORS;
-    if (f && fclose(f)) ok = 0;
+    /* the header and map, then the disk's last byte: the file is the whole disk
+     * (sparse where the host's file system allows) */
+    if (dseek(b.f, 0) || fwrite(b.img, 1, b.img_len, b.f) != b.img_len) b.failed = 1;
+    if (dseek(b.f, (int64_t)b.g.sectors * SECT - 1) || fputc(0, b.f) == EOF) b.failed = 1;
+    if (fclose(b.f)) b.failed = 1;
     free(b.img);
-    if (!ok) { say(why, whysz, "cannot write %s", image); return -1; }
+    if (b.failed) { remove(image); say(why, whysz, "cannot write %s", image); return -1; }
     if (skipped) *skipped = b.skipped;
     return 0;
+}
+
+int hostdir_build(const char *folder, const char *image, int *skipped, char *why, size_t whysz) {
+    return build_image(folder, image, 0, skipped, why, whysz);
+}
+
+int hostdir_build_hd(const char *folder, const char *image, int *skipped, char *why, size_t whysz) {
+    return build_image(folder, image, 1, skipped, why, whysz);
 }
 
 /* ---- writing back ---------------------------------------------------------------- */
 
 typedef struct reader {
-    uint8_t *img;
-    long sectors;
+    FILE *f;
+    int64_t sectors;
     unsigned sctg, ngrp;
-    int written;
+    uint8_t *map;               /* the header and the map */
+    time_t since;               /* host files changed after this were changed on the host too */
+    int written, kept;
 } reader;
 
 /* A file's bytes, from its first group along the map. */
 static uint8_t *read_file(reader *r, unsigned first, uint32_t len) {
-    if (len > (uint32_t)r->sectors * SECT) return NULL;
+    if ((int64_t)len > r->sectors * SECT) return NULL;
     uint8_t *out = malloc(len ? len : 1);
     if (!out) return NULL;
     unsigned gsize = r->sctg * SECT, g = first;
     for (uint32_t at = 0, steps = 0; at < len; at += gsize, steps++) {
-        if (g >= r->ngrp || (long)(g + 1) * r->sctg > r->sectors || steps > r->ngrp) { free(out); return NULL; }
+        if (g >= r->ngrp || (int64_t)(g + 1) * r->sctg > r->sectors || steps > r->ngrp) { free(out); return NULL; }
         uint32_t n = len - at < gsize ? len - at : gsize;
-        memcpy(out + at, r->img + (size_t)g * gsize, n);
-        g = get16(r->img + QWA_GMAP + 2 * g);
+        if (dseek(r->f, (int64_t)g * gsize) || fread(out + at, 1, n, r->f) != n) { free(out); return NULL; }
+        g = get16(r->map + QWA_GMAP + 2 * g);
     }
     return out;
 }
@@ -295,6 +349,22 @@ static int same_file(const char *path, const uint8_t *p, size_t n) {
     }
     fclose(f);
     return same && at == n;
+}
+
+/* A whole file written beside the old one and then put in its place, so a
+ * failed write (a full disk, openql stopped) never leaves half a file. */
+int hostdir_write_file(const char *path, const void *p, size_t n) {
+    char tmp[1500];
+    snprintf(tmp, sizeof tmp, "%s.openql-new", path);
+    FILE *f = fopen(tmp, "wb");
+    if (!f) return -1;
+    int ok = fwrite(p, 1, n, f) == n;
+    if (fclose(f)) ok = 0;
+#ifdef _WIN32
+    if (ok) remove(path);                       /* Windows will not rename over a file */
+#endif
+    if (!ok || rename(tmp, path)) { remove(tmp); return -1; }
+    return 0;
 }
 
 /* The host name for a QL name in a folder: the one it came from (a host
@@ -347,37 +417,49 @@ static void sync_dir(reader *r, const uint8_t *dir, uint32_t len, const char *pr
                 n += 8;
             }
             if (!same_file(path, data + HDR, n)) {
-                FILE *f = fopen(path, "wb");
-                if (f) {
-                    if (fwrite(data + HDR, 1, n, f) == n) r->written++;
-                    fclose(f);
+                /* changed on the host since the disk was made, and by the
+                 * QL too: the host's stays, and the QL's goes beside it */
+                struct stat st;
+                char alt[1500];
+                const char *to = path;
+                if (r->since && !stat(path, &st) && st.st_mtime > r->since) {
+                    snprintf(alt, sizeof alt, "%s.from-ql", path);
+                    to = alt;
+                    r->kept++;
                 }
+                if (!same_file(to, data + HDR, n) && hostdir_write_file(to, data + HDR, n) == 0) r->written++;
             }
         }
         free(data);
     }
 }
 
-int hostdir_sync(const char *image, const char *folder, char *why, size_t whysz) {
-    FILE *f = fopen(image, "rb");
-    if (!f) { say(why, whysz, "cannot read %s", image); return -1; }
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
+int hostdir_sync(const char *image, const char *folder, time_t since, int *kept, char *why, size_t whysz) {
+    if (kept) *kept = 0;
     reader r = { 0 };
+    r.since = since;
+    r.f = fopen(image, "rb");
+    if (!r.f) { say(why, whysz, "cannot read %s", image); return -1; }
+    int64_t size = dsize(r.f);
     r.sectors = size / SECT;
-    r.img = malloc((size_t)size + 1);
-    int ok = r.img && size >= SECT && fread(r.img, 1, (size_t)size, f) == (size_t)size;
-    fclose(f);
-    if (!ok || get32(r.img + QWA_ID) != 0x514c5741) { free(r.img); say(why, whysz, "%s is not a QLWA disk", image); return -1; }
-    r.sctg = get16(r.img + QWA_SCTG);
-    r.ngrp = get16(r.img + QWA_NGRP);
-    if (!r.sctg || (size_t)QWA_GMAP + 2 * r.ngrp > (size_t)size) { free(r.img); say(why, whysz, "%s's map is broken", image); return -1; }
-    uint32_t rlen = get32(r.img + QWA_RLEN);
-    uint8_t *root = read_file(&r, get16(r.img + QWA_ROOT), rlen);
-    if (!root) { free(r.img); say(why, whysz, "%s's directory is broken", image); return -1; }
+    uint8_t head[SECT];
+    if (size < SECT || dseek(r.f, 0) || fread(head, 1, SECT, r.f) != SECT || get32(head + QWA_ID) != 0x514c5741) {
+        fclose(r.f); say(why, whysz, "%s is not a QLWA disk", image); return -1;
+    }
+    r.sctg = get16(head + QWA_SCTG);
+    r.ngrp = get16(head + QWA_NGRP);
+    size_t map_len = (size_t)QWA_GMAP + 2 * r.ngrp;
+    if (!r.sctg || (int64_t)map_len > size || !(r.map = malloc(map_len)) ||
+        dseek(r.f, 0) || fread(r.map, 1, map_len, r.f) != map_len) {
+        free(r.map); fclose(r.f); say(why, whysz, "%s's map is broken", image); return -1;
+    }
+    uint32_t rlen = get32(r.map + QWA_RLEN);
+    uint8_t *root = read_file(&r, get16(r.map + QWA_ROOT), rlen);
+    if (!root) { free(r.map); fclose(r.f); say(why, whysz, "%s's directory is broken", image); return -1; }
     sync_dir(&r, root, rlen, "", folder, 0);
     free(root);
-    free(r.img);
+    free(r.map);
+    fclose(r.f);
+    if (kept) *kept = r.kept;
     return r.written;
 }

@@ -66,7 +66,7 @@ typedef struct sql_uart {             /* a 16550, as far as SMSQ/E's serial driv
     int rx_head, rx_tail;
 } sql_uart;
 
-typedef struct sql_ide {              /* one ATA disk, PIO, on the primary channel */
+typedef struct sql_ide {              /* one ATA disk, PIO, on the primary channel: the master or the slave */
     FILE *f;                          /* the image: a QXL.WIN file is a whole QL hard disk */
     uint32_t sectors;
     uint16_t cyls, heads, spt;
@@ -77,6 +77,7 @@ typedef struct sql_ide {              /* one ATA disk, PIO, on the primary chann
     int read_only;
     int geometry;                     /* the QLWA header names no geometry: the disk's is shown in sector 0 */
     int intrq;                        /* INTRQ (IRQ 14): a command or a sector done, until the status is read */
+    int unit;                         /* 0 the master, 1 the slave: the one bit 4 of the head register picks */
 } sql_ide;
 
 typedef struct superql {
@@ -101,7 +102,8 @@ typedef struct superql {
     /* multi-I/O */
     sql_uart com[4];
     uint8_t lpt_data, lpt_ctl;
-    sql_ide ide;
+    sql_ide ide[2];                   /* WIN1_ (the master) and the slave, which WIN2_ is (sql_win2_slave) */
+    int win2_set;                     /* WIN2_ has been pointed at the slave */
     sql_fdc fdc;                      /* FLP1_ and FLP2_ */
     /* sound: two 8-bit DACs, fed by SMSQ/E at each sample interrupt (level 6,
      * 20 or 40 kHz, on while the sample enable is set) */
@@ -121,7 +123,14 @@ typedef struct superql {
 } superql;
 
 int sql_init(superql *s, const char *rom_path, uint32_t ram_mb);
-int sql_attach_disk(superql *s, const char *path, int read_only);   /* WIN1: an IDE disk on the primary channel */
+/* An IDE disk on the primary channel: unit 0 the master (WIN1_), 1 the slave. */
+int sql_attach_disk(superql *s, int unit, const char *path, int read_only);
+void sql_detach_disk(superql *s, int unit);
+/* SMSQ/E's Q40 driver takes every WINn_ from the master until WIN_DRIVE
+ * says otherwise. With a slave fitted, this finds the driver's table once
+ * it is linked and makes WIN2_ the slave, as WIN_DRIVE 2,1 would; 1 once
+ * done (or when there is nothing to do), 0 while the driver is not there yet. */
+int sql_win2_slave(superql *s);
 /* The display SMSQ/E starts in (SQL_D_QL4, SQL_D_SMALL: 512 x 256 in 16-bit
  * colour, SQL_D_LARGE: 1024 x 512), set in its configuration in the ROM
  * image (MenuConfig's "Initial display mode"), so at the next reset. 0, or

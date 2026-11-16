@@ -22,7 +22,7 @@ typedef struct settings {
     int win1_ro;
     char flp[2][SET_PATH];          /* the Super QL's FLP1_, FLP2_ */
     char mdv[2][SET_PATH];          /* the QL's mdv1_, mdv2_ */
-    char host_dir[SET_PATH];        /* a host folder as a drive (WIN2_ / mdv2_), see hostdir.h */
+    char host_dir[SET_PATH];        /* a host folder as a drive: WIN2_ (hostdir.h) or DOS1_ (ql/qldos.h) */
     int scale, fullscreen, speed, sound;
     int display;                    /* the display SMSQ/E starts in (DISPLAY_*) */
     int launcher;                   /* show the launcher when openql starts with nothing to do */

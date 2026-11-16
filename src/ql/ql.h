@@ -111,6 +111,9 @@ typedef struct ql {
     uint64_t frames;
     ql_ipc ipc;
     int ntsc;
+    /* DOS1_ (qldos.h): its state, and what frees it at ql_free */
+    void *dos;
+    void (*dos_free)(struct ql *q);
 } ql;
 
 int ql_init(ql *q, const char *rom_path, const char *cart_path, uint32_t ram_kib);

@@ -18,8 +18,10 @@
  *   -w  WIN1 on the Super QL: a QXL.WIN file is a whole QL hard disk (-R: read only)
  *   -f  a floppy image in the Super QL's FLP1_ (a second -f: FLP2_): a raw QL
  *       floppy, 720 KB, 1.44 MB or 2.88 MB (a read-only file is write protected)
- *   -D  a folder on the host as the Super QL's FLP2_ (hostdir.h): written
- *       back to the folder when the disk comes out or openql stops
+ *   -D  a folder on the host as a drive: the Super QL's WIN2_ (a hard disk
+ *       made from it, hostdir.h, written back to the folder when openql
+ *       stops or the folder changes), the QL's DOS1_ (ql/qldos.h: the
+ *       folder's own files, read and written as the QL goes)
  *   -d  a microdrive cartridge image in the QL's mdv1_ (a second -d: mdv2_):
  *       255 sectors of 686 bytes (QLAY, MiSTer); a new or empty file is a
  *       blank cartridge to FORMAT; a read-only file has its tab out
@@ -60,6 +62,7 @@
 #include "ql/ql.h"
 #include "superql/superql.h"
 #include "hostdir.h"
+#include "ql/qldos.h"
 #include "hostser.h"
 #include "settings.h"
 #include "gui.h"
@@ -509,42 +512,60 @@ static const char *rom_for(const settings *c) {
 }
 
 
-/* ---- a host folder in FLP2_ (hostdir.h) ---------------------------------------- */
+/* ---- a host folder as a drive -------------------------------------------------------
+ * The Super QL: WIN2_, a QLWA hard disk image made from the folder (hostdir.h)
+ * on the IDE slave, its files written back on exit, when the folder changes,
+ * or when asked. The QL: DOS1_, openql's own driver (ql/qldos.h), which reads
+ * and writes the folder's files as the QL goes. */
 
-static int hd_in;                      /* the host folder's image is in FLP2_ */
+static int hd_in;                      /* a host folder is a drive */
 static char hd_folder[SET_PATH], hd_img[SET_PATH];
+static time_t hd_since;                /* host files changed after this are the host's to keep */
 
 static void say(uint32_t colour, const char *fmt, ...);
 
 static int hostdir_in(const char *folder) {
-    char why[300];
+    char why[300] = "";
     int skipped = 0;
-    snprintf(hd_img, sizeof hd_img, "%s/host-folder-flp2.img", data_dir());
-    make_dirs(data_dir());
-    if (hostdir_build(folder, hd_img, &skipped, why, sizeof why) || sql_insert_floppy(&s, 1, hd_img, 0)) {
-        say(UI_BAD, "the host folder: %s", why);
-        return -1;
+    if (machine == M_QL) {
+        if (ql_dos_attach(&q, folder, why, sizeof why)) { say(UI_BAD, "the host folder: %s", why); return -1; }
+    } else {
+        snprintf(hd_img, sizeof hd_img, "%s/host-folder-win2.win", data_dir());
+        make_dirs(data_dir());
+        hd_since = time(NULL);
+        if (hostdir_build_hd(folder, hd_img, &skipped, why, sizeof why) || sql_attach_disk(&s, 1, hd_img, 0)) {
+            say(UI_BAD, "the host folder: %s", why[0] ? why : "the disk did not open");
+            return -1;
+        }
     }
     snprintf(hd_folder, sizeof hd_folder, "%s", folder);
     hd_in = 1;
-    if (skipped) say(UI_ACCENT, "%s in FLP2_; %d files did not fit (2.8 MB) or had names too long", folder, skipped);
+    if (skipped) say(UI_ACCENT, "%s is WIN2_; %d files did not fit or had names too long", folder, skipped);
     return 0;
 }
 
-/* What the QL wrote, back to the folder; with eject, the disk comes out too. */
-static void hostdir_out(int eject) {
+/* What the Super QL wrote, back to the folder; with out, the drive goes too. */
+static void hostdir_out(int out) {
     if (!hd_in) return;
-    if (eject) { sql_eject_floppy(&s, 1); hd_in = 0; }
-    else if (s.fdc.d[1].f) fflush(s.fdc.d[1].f);
+    if (machine == M_QL) {
+        if (out) { ql_dos_detach(&q); hd_in = 0; }
+        return;
+    }
+    if (s.ide[1].f) fflush(s.ide[1].f);
     char why[300];
-    int n = hostdir_sync(hd_img, hd_folder, why, sizeof why);
+    int kept = 0;
+    int n = hostdir_sync(hd_img, hd_folder, hd_since, &kept, why, sizeof why);
+    hd_since = time(NULL);
+    if (out) { sql_detach_disk(&s, 1); hd_in = 0; }
     if (n < 0) say(UI_BAD, "the host folder: %s", why);
+    else if (kept) say(UI_ACCENT, "%d file%s written to %s; %d changed there too: the QL's copies are NAME.from-ql",
+                       n, n == 1 ? "" : "s", hd_folder, kept);
     else say(UI_GOOD, "%d file%s written to %s", n, n == 1 ? "" : "s", hd_folder);
 }
 
 static void machine_down(void) {
     if (!machine_up) return;
-    if (machine == M_SUPERQL) hostdir_out(1);
+    hostdir_out(1);
     if (machine == M_QL) ql_free(&q);
     else sql_free(&s);
     machine_up = 0;
@@ -566,6 +587,10 @@ static int machine_start(const settings *c, const char *cart) {
         machine_up = 1;
         for (int i = 0; i < 2; i++)
             if (c->mdv[i][0] && ql_mdv_insert(&q, i, c->mdv[i], 0)) { say(UI_BAD, "cannot open mdv%d_'s %s", i + 1, c->mdv[i]); machine_down(); return -1; }
+        /* DOS1_'s driver in the ROM port, unless a cartridge is there: a
+         * host folder can then come and go while the QL runs */
+        if (!cart && ql_dos_install(&q) == 0 && c->host_dir[0] && hostdir_in(c->host_dir)) { machine_down(); return -1; }
+        if (cart && c->host_dir[0]) say(UI_ACCENT, "a cartridge is in the ROM port: no DOS1_ for the host folder");
         q.ser_out = serial_out;
         title = "OpenQL · Sinclair QL";
         fprintf(stderr, "openql: Sinclair QL, 68008 at 7.5 MHz, %u KB RAM, ROM %s\n", q.ram_bytes >> 10, rom);
@@ -575,9 +600,9 @@ static int machine_start(const settings *c, const char *cart) {
         machine_up = 1;
         if (sql_set_display(&s, SQL_D_QL4 + c->display) && c->display != DISPLAY_QL)
             say(UI_ACCENT, "this ROM has no display setting: SMSQ/E starts as it is set up");
-        if (c->win1[0] && sql_attach_disk(&s, c->win1, c->win1_ro)) { say(UI_BAD, "cannot open WIN1_'s %s", c->win1); machine_down(); return -1; }
+        if (c->win1[0] && sql_attach_disk(&s, 0, c->win1, c->win1_ro)) { say(UI_BAD, "cannot open WIN1_'s %s", c->win1); machine_down(); return -1; }
         for (int i = 0; i < 2; i++)
-            if (c->flp[i][0] && !(i == 1 && c->host_dir[0]) && sql_insert_floppy(&s, i, c->flp[i], 0)) { say(UI_BAD, "cannot open FLP%d_'s %s", i + 1, c->flp[i]); machine_down(); return -1; }
+            if (c->flp[i][0] && sql_insert_floppy(&s, i, c->flp[i], 0)) { say(UI_BAD, "cannot open FLP%d_'s %s", i + 1, c->flp[i]); machine_down(); return -1; }
         if (c->host_dir[0] && hostdir_in(c->host_dir)) { machine_down(); return -1; }
         s.ser_out = serial_out;
         s.par_out = printer_out;
@@ -757,10 +782,9 @@ void app_display(int display) {
     if (sql_set_display(&s, SQL_D_QL4 + display)) say(UI_BAD, "this ROM has no display setting");
     else say(UI_GOOD, "SMSQ/E starts in %s from the next reset", display_name(display));
 }
-int app_drive_in(int drive) { return machine == M_QL ? q.mdv[drive].tape != NULL : s.fdc.d[drive].f != NULL && !(drive == 1 && hd_in); }
+int app_drive_in(int drive) { return machine == M_QL ? q.mdv[drive].tape != NULL : s.fdc.d[drive].f != NULL; }
 
 void app_insert(int drive, const char *path) {
-    if (machine == M_SUPERQL && drive == 1 && hd_in) { hostdir_out(1); cfg.host_dir[0] = 0; }
     if (machine == M_SUPERQL) {
         if (sql_insert_floppy(&s, drive, path, 0) == 0) { snprintf(cfg.flp[drive], SET_PATH, "%s", path); say(UI_GOOD, "%s is in FLP%d_.", base_name(path), drive + 1); }
         else say(UI_BAD, "FLP%d_ cannot take %s.", drive + 1, base_name(path));
@@ -771,7 +795,6 @@ void app_insert(int drive, const char *path) {
 }
 
 void app_eject(int drive) {
-    if (machine == M_SUPERQL && drive == 1 && hd_in) { hostdir_out(1); cfg.host_dir[0] = 0; return; }
     if (machine == M_SUPERQL) { sql_eject_floppy(&s, drive); cfg.flp[drive][0] = 0; }
     else { ql_mdv_eject(&q, drive); cfg.mdv[drive][0] = 0; }
     say(UI_TEXT, "%s%d_ is empty.", machine == M_SUPERQL ? "FLP" : "mdv", drive + 1);
@@ -788,12 +811,25 @@ void app_blank_cartridge(void) {
 }
 
 int app_hostdir_in(void) { return hd_in; }
+const char *app_hostdir_drive(void) { return machine == M_QL ? "DOS1_" : "WIN2_"; }
 void app_hostdir_insert(const char *folder) {
-    if (s.fdc.d[1].f) app_eject(1);
+    if (machine == M_QL && !ql_dos_installed(&q)) { say(UI_BAD, "a cartridge is in the ROM port: no DOS1_"); return; }
+    hostdir_out(1);
     if (hostdir_in(folder) == 0) {
         snprintf(cfg.host_dir, SET_PATH, "%s", folder);
-        if (status_colour != UI_ACCENT) say(UI_GOOD, "%s is FLP2_.", folder);
+        /* a hard disk does not change under SMSQ/E: it starts again to find it */
+        if (machine == M_SUPERQL) sql_reset(&s, 0);
+        if (status_colour != UI_ACCENT)
+            say(UI_GOOD, machine == M_QL ? "%s is DOS1_." : "%s is WIN2_: the Super QL was reset to find it.", folder);
     }
+}
+void app_hostdir_remove(void) {
+    if (!hd_in) return;
+    hostdir_out(1);
+    cfg.host_dir[0] = 0;
+    if (machine == M_SUPERQL) sql_reset(&s, 0);
+    if (status_colour == UI_GOOD) return;    /* the write-back's own line stays */
+    say(UI_TEXT, "No host folder.");
 }
 void app_hostdir_write(void) { hostdir_out(0); }
 

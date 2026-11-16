@@ -472,6 +472,7 @@ int ql_load_state(ql *q, const char *path, const char **why) {
 }
 
 void ql_free(ql *q) {
+    if (q->dos_free) q->dos_free(q);
     for (int i = 0; i < QL_MDV_DRIVES; i++) ql_mdv_eject(q, i);
     free(q->ram);
     q->ram = NULL;
