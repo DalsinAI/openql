@@ -1,0 +1,19 @@
+#!/bin/sh
+# Assembles src/ql/qldos.s (the QL's DOS1_ driver) into src/ql/qldos_rom.h.
+# Needs GNU as for the 68000 (Debian/Ubuntu: binutils-m68k-linux-gnu). The
+# header is in the repository, so building OpenQL never needs this.
+set -e
+cd "$(dirname "$0")/.."
+AS=${AS:-m68k-linux-gnu-as}
+OBJCOPY=${OBJCOPY:-m68k-linux-gnu-objcopy}
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+"$AS" -m68000 -o "$tmp/qldos.o" src/ql/qldos.s
+"$OBJCOPY" -O binary -j .text "$tmp/qldos.o" "$tmp/qldos.bin"
+{
+    echo "/* src/ql/qldos.s, assembled by tools/build-qldos-rom: do not edit. */"
+    echo "static const unsigned char qldos_rom[] = {"
+    od -An -v -tx1 "$tmp/qldos.bin" | sed 's/ *\([0-9a-f][0-9a-f]\)/0x\1, /g; s/^/    /; s/, *$/,/'
+    echo "};"
+} > src/ql/qldos_rom.h
+echo "src/ql/qldos_rom.h: $(wc -c < "$tmp/qldos.bin") bytes"
