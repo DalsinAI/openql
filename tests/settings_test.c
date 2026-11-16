@@ -13,17 +13,17 @@ int main(void) {
     settings_default(&a);
     CHECK(a.machine == SET_SUPERQL && a.ram_sql_mb == 128 && a.ram_ql_kb == 640 && a.sound && a.launcher, "defaults");
     CHECK(settings_load(&b, "no_such_settings.cfg") == -1 && !b.seen && b.machine == SET_SUPERQL, "no file: defaults");
-    a.machine = SET_QL; a.ram_ql_kb = 896; a.scale = SCALE_INTEGER; a.speed = SPEED_MAX; a.fullscreen = 1;
+    a.machine = SET_QL; a.ram_ql_kb = 896; a.scale = SCALE_INTEGER; a.speed = SPEED_MAX; a.fullscreen = 1; a.display = DISPLAY_LARGE;
     snprintf(a.win1, sizeof a.win1, "/disks/with = signs/QLE.WIN");
     snprintf(a.mdv[1], sizeof a.mdv[1], "C:\\QL\\games.mdv");
     CHECK(settings_save(&a, path) == 0, "saved");
     CHECK(settings_load(&b, path) == 0 && b.seen, "loaded");
-    CHECK(b.machine == SET_QL && b.ram_ql_kb == 896 && b.scale == SCALE_INTEGER && b.speed == SPEED_MAX && b.fullscreen, "numbers");
+    CHECK(b.machine == SET_QL && b.ram_ql_kb == 896 && b.scale == SCALE_INTEGER && b.speed == SPEED_MAX && b.fullscreen && b.display == DISPLAY_LARGE, "numbers");
     CHECK(!strcmp(b.win1, a.win1) && !strcmp(b.mdv[1], a.mdv[1]) && !b.flp[0][0], "paths (%s, %s)", b.win1, b.mdv[1]);
     FILE *f = fopen(path, "w");
-    fputs("# hand made\nscale = 9\nmachine=0\nsomething_newer = 1\n  speed\t=  1\r\n", f);
+    fputs("# hand made\nscale = 9\nmachine=0\nsomething_newer = 1\n  speed\t=  1\r\nsuperql_display = 5\n", f);
     fclose(f);
-    CHECK(settings_load(&b, path) == 0 && b.scale == SCALE_43 && b.machine == SET_QL && b.speed == SPEED_2, "hand made: out of range kept in range");
+    CHECK(settings_load(&b, path) == 0 && b.scale == SCALE_43 && b.machine == SET_QL && b.speed == SPEED_2 && b.display == DISPLAY_QL, "hand made: out of range kept in range");
     remove(path);
 
 #ifndef _WIN32

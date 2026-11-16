@@ -19,8 +19,17 @@ void gui_quit(void);
 int gui_launcher(settings *cfg);
 
 /* The machine's menu, until it is closed. */
-enum { GUI_RESUME, GUI_SETTINGS, GUI_QUIT };
+enum { GUI_RESUME, GUI_SETTINGS, GUI_QUIT, GUI_DEBUG };
 int gui_menu(settings *cfg);
+
+/* The debugger's window (the menu's Debugger..., Ctrl+F11, or a
+ * breakpoint): open beside the machine's while it runs or is stopped.
+ * gui_debug_tick, once a frame while it is open, takes its events and
+ * shows what the CPU is doing. Closing it lets the CPU run on, its
+ * breakpoints kept. */
+void gui_debug_open(void);
+int gui_debug_is_open(void);
+void gui_debug_tick(void);
 
 /* Let the windows' events through while openql's own loop runs. */
 void gui_pump(void);
@@ -34,6 +43,8 @@ int app_fetch_busy(void);
 int app_fetch_done(void);                /* 1 once, when a fetch has finished */
 
 int app_is_ql(void);                     /* the running machine */
+struct ac090 *app_cpu(void);             /* its CPU, for the debugger (debug.h) */
+void app_display(int display);           /* the Super QL's display from the next reset (DISPLAY_*) */
 int app_drive_in(int drive);             /* FLP or mdv 0/1 holds something */
 void app_insert(int drive, const char *path);
 void app_eject(int drive);

@@ -20,6 +20,8 @@ CPU_DEP = $(CPU) src/cpu/ac090.h src/cpu/ac090_mmu.c src/cpu/ac090_fpu.c src/cpu
 QL      = src/ql/ql.c src/ql/mdv.c
 SQL     = src/superql/superql.c src/superql/fdc.c
 HOST    = src/hostser.c src/hostdir.c src/settings.c src/ql/qldos.c
+DEBUG   = src/debug.c src/cpu/dis68k.c
+DEBUG_H = src/debug.h src/cpu/dis68k.h
 
 LIBUI     = build/libui-ng
 LIBUI_A   = $(LIBUI)/build/meson-out/libui.a
@@ -37,8 +39,8 @@ endif
 
 all: openql
 
-openql: src/openql.c src/gui.c $(QL) $(SQL) $(HOST) $(CPU_DEP) src/ql/ql.h src/superql/superql.h src/superql/fdc.h src/hostser.h src/hostdir.h src/settings.h src/gui.h src/state.h src/ql/qldos.h src/ql/qldos_rom.h $(LIBUI_A) $(GUI_RES)
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) -I$(LIBUI) src/openql.c src/gui.c $(QL) $(SQL) $(HOST) $(CPU) $(GUI_RES) $(LIBUI_A) $(GUI_LIBS) $(SDL_LIBS) -lm $(NETLIBS) $(LDLIBS) -o $@
+openql: src/openql.c src/gui.c $(QL) $(SQL) $(HOST) $(DEBUG) $(DEBUG_H) $(CPU_DEP) src/ql/ql.h src/superql/superql.h src/superql/fdc.h src/hostser.h src/hostdir.h src/settings.h src/gui.h src/state.h src/ql/qldos.h src/ql/qldos_rom.h $(LIBUI_A) $(GUI_RES)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) -I$(LIBUI) src/openql.c src/gui.c $(QL) $(SQL) $(HOST) $(DEBUG) $(CPU) $(GUI_RES) $(LIBUI_A) $(GUI_LIBS) $(SDL_LIBS) -lm $(NETLIBS) $(LDLIBS) -o $@
 
 $(LIBUI_A):
 	./tools/build-libui $(LIBUI)
@@ -69,6 +71,9 @@ tests/qldos_test: tests/qldos_test.c src/ql/qldos.c src/ql/qldos.h src/ql/qldos_
 tests/fdc_test: tests/fdc_test.c src/superql/fdc.c src/superql/fdc.h
 	$(CC) $(CFLAGS) tests/fdc_test.c src/superql/fdc.c -o $@
 
+tests/debug_test: tests/debug_test.c $(DEBUG) $(DEBUG_H) $(CPU_DEP)
+	$(CC) $(CFLAGS) tests/debug_test.c $(DEBUG) $(CPU) -lm -o $@
+
 # The FPU's results, bit for bit: the host's own FPU (the x87 on x86 Linux,
 # the integer one elsewhere), and the integer one built for this host too.
 tests/fpu_test: tests/fpu_test.c $(CPU_DEP)
@@ -77,13 +82,14 @@ tests/fpu_test: tests/fpu_test.c $(CPU_DEP)
 tests/fpu_soft_test: tests/fpu_test.c $(CPU_DEP)
 	$(CC) $(CFLAGS) -DAC090_FPU_SOFT=1 tests/fpu_test.c $(CPU) -lm -o $@
 
-test: tests/ql_test tests/superql_test tests/fdc_test tests/settings_test tests/hostdir_test tests/qldos_test tests/fpu_test tests/fpu_soft_test
+test: tests/ql_test tests/superql_test tests/fdc_test tests/settings_test tests/hostdir_test tests/qldos_test tests/debug_test tests/fpu_test tests/fpu_soft_test
 	./tests/ql_test
 	./tests/superql_test
 	./tests/fdc_test
 	./tests/settings_test
 	cd tests && ./hostdir_test
 	cd tests && ./qldos_test
+	./tests/debug_test
 	./tests/fpu_test
 	./tests/fpu_soft_test
 	python3 -I tests/test_fetch_roms.py
@@ -94,6 +100,6 @@ install: openql
 	install -D -m 644 roms.json $(DESTDIR)$(PREFIX)/share/openql/roms.json
 
 clean:
-	rm -f build/openql-res.o openql qlrun tests/ql_test tests/superql_test tests/fdc_test tests/settings_test tests/hostdir_test tests/qldos_test tests/fpu_test tests/fpu_soft_test
+	rm -f build/openql-res.o openql qlrun tests/ql_test tests/superql_test tests/fdc_test tests/settings_test tests/hostdir_test tests/qldos_test tests/debug_test tests/fpu_test tests/fpu_soft_test
 
 .PHONY: all test install clean

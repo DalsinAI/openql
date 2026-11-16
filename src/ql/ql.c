@@ -481,7 +481,7 @@ void ql_free(ql *q) {
 uint64_t ql_run(ql *q, uint64_t until) {
     ac090 *c = &q->cpu;
     uint64_t start = c->instructions;
-    while (c->clock < until && !c->halted) {
+    while (c->clock < until && !c->halted && !c->dbg_stop) {   /* (dbg_stop: the debugger stopped the CPU) */
         uint64_t next = q->next_frame;
         if (q->tx_done && q->tx_done < next) next = q->tx_done;
         uint64_t tape = ql_mdv_next(q);

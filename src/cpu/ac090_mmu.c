@@ -82,6 +82,31 @@ static mmu_walk_t mmu_walk(ac090 *c, uint32_t a, int write, int super, int updat
     return w;
 }
 
+/* The debugger's look (ac090_mmu_peek): a long word of the tables from a
+ * page of memory, else 0 (an invalid descriptor): no bus cycle, no wait. */
+static int peek32(const ac090 *c, uint32_t a, uint32_t *v) {
+    const uint8_t *p = c->bus.rpage[a >> 16];
+    if (!p || (a & 0xffff) > 0xfffc || (a & 3)) return 0;
+    p += a & 0xffff;
+    *v = (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
+    return 1;
+}
+
+int ac090_mmu_peek(const ac090 *c, uint32_t a, int prog, uint32_t *pa) {
+    int wp, super = c->s != 0;
+    if (!c->mmu_on || mmu_tt(c, a, super, prog, &wp)) { *pa = a; return 0; }
+    uint32_t rd, pd, d, root = (super ? c->srp : c->urp) & ~0x1ffu;
+    if (!peek32(c, root + (a >> 25) * 4, &rd) || !(rd & 2)) return -1;
+    if (!peek32(c, (rd & ~0x1ffu) + (a >> 18 & 0x7f) * 4, &pd) || !(pd & 2)) return -1;
+    uint32_t da = mmu_shift(c) == 12 ? (pd & ~0xffu) + (a >> 12 & 0x3f) * 4 : (pd & ~0x7fu) + (a >> 13 & 0x1f) * 4;
+    if (!peek32(c, da, &d)) return -1;
+    if ((d & 3) == 2 && !peek32(c, d & ~3u, &d)) return -1;   /* indirect */
+    if ((d & 3) == 0 || (d & 3) == 2 || ((d & 0x80) && !super)) return -1;
+    uint32_t off = (1u << mmu_shift(c)) - 1;
+    *pa = (d & ~off) | (a & off);
+    return 0;
+}
+
 /* The JIT's cache of looks that would hit (mmu_xc in ac090.h) forgets them
  * all: the ATC, a DTT or a device page's candidacy has changed. */
 static void mmu_xc_forget(ac090 *c) {

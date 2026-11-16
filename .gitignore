@@ -12,4 +12,5 @@ __pycache__/
 /tests/settings_test
 /tests/hostdir_test
 /build/
+/tests/debug_test
 /tests/qldos_test

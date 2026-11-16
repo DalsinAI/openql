@@ -14,7 +14,7 @@ It is written from the Q40 definitions in the SMSQ/E sources (`keys/q40`, `keys/
 | Low ROM | At reset, reads below $18000 come from the ROM and writes go to RAM. A write to $FF018000 switches to RAM, which is then write protected below $18000. A write to $FF010000 switches back |
 | 68040 | AC090's 68040 model with its FPU, through the interpreter for now |
 | Master chip | The interrupt register (keyboard, serial, 50 Hz frame, external), its enables and acknowledges, the display mode, the LED. Everything is on level 2 |
-| Video | QL modes 4 and 8 from the QL screen at $20000; 16-bit colour (GGGGGRRRRRBBBBBx) at 512 x 256 or 1024 x 512 from video RAM. The picture is 1024 x 512, with smaller modes doubled |
+| Video | QL modes 4 and 8 from the QL screen at $20000; 16-bit colour (GGGGGRRRRRBBBBBx) at 512 x 256 or 1024 x 512 from video RAM. The picture is 1024 x 512, with smaller modes doubled. SMSQ/E starts in the mode its configuration names (the SMSQ block's OSPD item, "Initial display mode": 1 QL mode 4, 2 small 16 bit, 3 large 16 bit); `sql_set_display` sets it in the loaded ROM image |
 | Keyboard | PC set 2 scan codes, as SMSQ/E's driver reads them. The window's keys are turned into them |
 | Mouse | A Microsoft serial mouse on COM2, as Q40 owners fitted one. It answers 'M' when SMSQ/E's driver raises DTR and RTS, then sends a 3-byte packet each frame there is movement or a button change. The host's pointer over the window becomes its movement (a QL-mode pixel is two of the picture's), and its left and right buttons are the mouse's. SMSQ/E's pointer environment is built in, so nothing needs loading |
 | Clock | MK48T08 style: BCD time from the host's clock plus an offset that SMSQ/E sets; 2 KB of NVRAM, one byte every 4 |

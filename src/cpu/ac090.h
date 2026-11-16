@@ -48,6 +48,9 @@ typedef ac090_fx80 ac090_fpreg;
 typedef long double ac090_fpreg;
 #endif
 
+#define AC090_DBG_BPS 32         /* breakpoints the debugger keeps */
+enum { AC090_DBG_NONE, AC090_DBG_BREAK, AC090_DBG_BP, AC090_DBG_STEP, AC090_DBG_TEMP };   /* dbg_why */
+
 typedef struct ac090_bus {
     /* 64 KB pages over the address space (256 cover a 24-bit CPU, all 65536
      * a 32-bit one). A NULL entry sends the access to read/write below.
@@ -332,6 +335,18 @@ typedef struct ac090 {
      * extension word without the checks the run has made. */
     const uint8_t *run_page;
     uint32_t run_base, run_w;
+    /* The debugger (openql's). With dbg_on, ac090_run takes every
+     * instruction the general way and, before each, stops (dbg_stop set,
+     * the instruction not run) at a breakpoint (dbg_bp, or dbg_temp) or
+     * when dbg_stop is already set; after each, dbg_steps counts down to a
+     * stop. dbg_skip: the address it starts at again, not stopped at once
+     * (odd: none). The board's run loop ends its slice at a stop. Kept out
+     * of saved states (state_cpu_take copies only what comes before abort). */
+    int dbg_on, dbg_stop, dbg_why;
+    uint32_t dbg_steps;
+    uint32_t dbg_bp[AC090_DBG_BPS];
+    int dbg_nbp;
+    uint32_t dbg_temp, dbg_skip;
 } ac090;
 
 void ac090_init(ac090 *c, int model);
@@ -375,6 +390,11 @@ void ac090_set_sr(ac090 *c, uint16_t sr);
  * descriptors' U and M bits and the ATC are updated as by a real access. */
 int ac090_mmu_probe(ac090 *c, uint32_t a, int write, uint32_t *pa);
 void ac090_mmu_io_touch(ac090 *c, uint32_t a, int write);
+/* The debugger's look: the physical address a logical one reaches in the
+ * current mode, for a program (prog 1) or a data access, with nothing
+ * changed (no ATC entry, no U or M bit, no bus cycle). 0, or -1: the
+ * tables map nothing there. With the MMU off, the address as it is. */
+int ac090_mmu_peek(const ac090 *c, uint32_t a, int prog, uint32_t *pa);
 /* Translation off (TC E clear), as when the system bus resets: the tables
  * may live in memory the reset takes away. */
 void ac090_mmu_off(ac090 *c);

@@ -32,6 +32,7 @@ static const struct field { const char *key; int type; size_t off; } fields[] = 
     S("rom_ql", rom_ql), S("rom_superql", rom_sql), S("win1", win1), I("win1_read_only", win1_ro),
     S("flp1", flp[0]), S("flp2", flp[1]), S("mdv1", mdv[0]), S("mdv2", mdv[1]), S("host_folder", host_dir),
     I("scale", scale), I("fullscreen", fullscreen), I("speed", speed), I("sound", sound), I("launcher", launcher),
+    I("superql_display", display),
 #undef S
 #undef I
 };
@@ -62,6 +63,7 @@ int settings_load(settings *s, const char *path) {
     if (s->machine != SET_QL) s->machine = SET_SUPERQL;
     if (s->scale < 0 || s->scale >= SCALE_MODES) s->scale = SCALE_43;
     if (s->speed < 0 || s->speed >= SPEEDS) s->speed = SPEED_1;
+    if (s->display < 0 || s->display >= DISPLAYS) s->display = DISPLAY_QL;
     s->seen = 1;
     return 0;
 }
@@ -171,6 +173,11 @@ const char *fetched_qle(void) {
 const char *speed_name(int speed) {
     static const char *n[SPEEDS] = { "real time", "2 x", "4 x", "as fast as it goes" };
     return speed >= 0 && speed < SPEEDS ? n[speed] : "?";
+}
+
+const char *display_name(int display) {
+    static const char *n[DISPLAYS] = { "QL colours, 512 x 256 (mode 4)", "High colour, 512 x 256", "High colour, 1024 x 512" };
+    return display >= 0 && display < DISPLAYS ? n[display] : "?";
 }
 
 const char *scale_name(int scale) {

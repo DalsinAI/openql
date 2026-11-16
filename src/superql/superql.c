@@ -447,6 +447,7 @@ int sql_init(superql *s, const char *rom_path, uint32_t ram_mb) {
     int more = fgetc(f) != EOF;
     fclose(f);
     if (more || s->rom_len < 8) { fprintf(stderr, "superql: %s is not a ROM of 8 bytes to 8 MB\n", rom_path); return -1; }
+    s->rom_hash = state_hash(s->rom, s->rom_len);    /* before sql_set_display changes its configuration */
 
     ac090 *c = &s->cpu;
     ac090_init(c, AC090_68040);
@@ -464,6 +465,39 @@ int sql_init(superql *s, const char *rom_path, uint32_t ram_mb) {
         c->bus.wait[pg] = 0;
     }
     sql_reset(s, 1);
+    return 0;
+}
+
+/* SMSQ/E's configuration blocks (<<QCFX>>, level 2, as MenuConfig edits
+ * them): the item with this 4-letter name in the block with this name, in
+ * the ROM image; NULL if there is none. Each item is 16 bytes: its name,
+ * a type and a key byte, then a word that is where its value is, relative
+ * to that word. */
+static uint8_t *rom_config_item(superql *s, const char *block, const char *item) {
+    const uint8_t *r = s->rom;
+    uint32_t n = s->rom_len, bl = (uint32_t)strlen(block);
+    for (uint32_t i = 0; i + 16 < n; i += 2) {
+        if (memcmp(r + i, "<<QCFX>>02", 10)) continue;
+        uint32_t p = i + 10, len = (uint32_t)(r[p] << 8 | r[p + 1]);
+        if (len != bl || p + 2 + len > n || memcmp(r + p + 2, block, len)) continue;
+        p += 2 + ((len + 1) & ~1u);                     /* the name, then the version */
+        if (p + 2 > n) return NULL;
+        len = (uint32_t)(r[p] << 8 | r[p + 1]);
+        p += 2 + ((len + 1) & ~1u);
+        for (; p + 16 <= n && !(r[p] == 0xff && r[p + 1] == 0xff); p += 16) {
+            if (memcmp(r + p, item, 4)) continue;
+            int32_t at = (int32_t)(p + 6) + (int16_t)(r[p + 6] << 8 | r[p + 7]);
+            return at >= 0 && (uint32_t)at < n ? s->rom + at : NULL;
+        }
+        return NULL;
+    }
+    return NULL;
+}
+
+int sql_set_display(superql *s, int dmode) {
+    uint8_t *v = rom_config_item(s, "SMSQ", "OSPD");   /* "Initial display mode": 1 QL mode 4, 2 small 16 bit, 3 large 16 bit */
+    if (!v || *v < SQL_D_QL4 || *v > SQL_D_LARGE || dmode < SQL_D_QL4 || dmode > SQL_D_LARGE) return -1;
+    *v = (uint8_t)dmode;
     return 0;
 }
 
@@ -594,7 +628,7 @@ void sql_serial_in(superql *s, int port, uint8_t ch) {
 uint64_t sql_run(superql *s, uint64_t until) {
     ac090 *c = &s->cpu;
     uint64_t start = c->instructions;
-    while (c->clock < until && !c->halted) {
+    while (c->clock < until && !c->halted && !c->dbg_stop) {   /* (dbg_stop: the debugger stopped the CPU) */
         uint64_t next = s->next_frame < until ? s->next_frame : until;
         if (s->uie && s->next_sample < next) next = s->next_sample;
         update_irq(s);
@@ -626,7 +660,7 @@ uint64_t sql_run(superql *s, uint64_t until) {
 int sql_save_state(superql *s, const char *path, const char **why) {
     FILE *f = fopen(path, "wb");
     if (!f) { *why = "cannot write the file"; return -1; }
-    int ok = state_write_header(f, 2, sizeof *s, s->ram_bytes, state_hash(s->rom, s->rom_len)) == 0 &&
+    int ok = state_write_header(f, 2, sizeof *s, s->ram_bytes, s->rom_hash) == 0 &&
              fwrite(s, sizeof *s, 1, f) == 1 && fwrite(s->ram, 1, s->ram_bytes, f) == s->ram_bytes &&
              fwrite(s->vram, 1, SQL_VRAM_BYTES, f) == SQL_VRAM_BYTES;
     if (fclose(f)) ok = 0;
@@ -638,7 +672,7 @@ int sql_load_state(superql *s, const char *path, const char **why) {
     FILE *f = fopen(path, "rb");
     if (!f) { *why = "no saved state"; return -1; }
     superql *t = malloc(sizeof *t);
-    int ok = t && state_check_header(f, 2, sizeof *s, s->ram_bytes, state_hash(s->rom, s->rom_len), why) == 0;
+    int ok = t && state_check_header(f, 2, sizeof *s, s->ram_bytes, s->rom_hash, why) == 0;
     if (ok && fread(t, sizeof *t, 1, f) != 1) { ok = 0; *why = "the file is cut short"; }
     /* RAM and video RAM straight in: a file cut short past here leaves a machine to reset */
     if (ok && (fread(s->ram, 1, s->ram_bytes, f) != s->ram_bytes || fread(s->vram, 1, SQL_VRAM_BYTES, f) != SQL_VRAM_BYTES)) {

@@ -336,6 +336,39 @@ int main(void) {
         remove(st);
     }
 
+    /* the display SMSQ/E starts in: its ROM's own configuration item */
+    {
+        CHECK(sql_set_display(&s, SQL_D_LARGE) == -1, "a ROM with no configuration: no display to set");
+        /* the boot program, then a configuration block laid out as SMSQ/E 3.43's
+         * (its first: "SMSQ", items OSPL and OSPD, the language a word and
+         * the display a byte just before the block) */
+        static const uint8_t cfg[] = {
+            0x00, 0x2c, 0x00, 0x01,                               /* $1000: OSPL's value, then OSPD's at $1003 */
+            '<', '<', 'Q', 'C', 'F', 'X', '>', '>', '0', '2', 0, 4, 'S', 'M', 'S', 'Q', 0, 4, '3', '.', '4', '3',
+            'O', 'S', 'P', 'L', 0x0a, 'L', 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0,   /* $101A: the value at the word's own address ($1020) - $20 */
+            'O', 'S', 'P', 'D', 0x04, 'D', 0xff, 0xd3, 0, 0, 0, 0, 0, 0, 0, 0,   /* $102A: at $1030 - $2D */
+            0xff, 0xff,
+        };
+        uint8_t big[0x1100];
+        memset(big, 0x4e, sizeof big);
+        memcpy(big, img, sizeof img);
+        memcpy(big + 0x1000, cfg, sizeof cfg);
+        const char *rom2 = "superql_test_rom2.bin";
+        FILE *f2 = fopen(rom2, "wb");
+        CHECK(f2 && fwrite(big, 1, sizeof big, f2) == sizeof big, "write the second ROM");
+        if (f2) fclose(f2);
+        static superql s2;
+        CHECK(sql_init(&s2, rom2, 4) == 0, "init with it");
+        uint32_t hash = s2.rom_hash;
+        CHECK(sql_set_display(&s2, SQL_D_LARGE) == 0 && s2.rom[0x1003] == SQL_D_LARGE, "the large 16-bit mode set (%02x)", s2.rom[0x1003]);
+        CHECK(s2.rom[0x1000] == 0x00 && s2.rom[0x1001] == 0x2c && s2.rom[0x1002] == 0x00, "nothing else changed");
+        CHECK(sql_set_display(&s2, SQL_D_SMALL) == 0 && s2.rom[0x1003] == SQL_D_SMALL, "the small one");
+        CHECK(sql_set_display(&s2, 7) == -1 && s2.rom[0x1003] == SQL_D_SMALL, "no mode 7");
+        CHECK(s2.rom_hash == hash, "a saved state still knows the ROM");
+        sql_free(&s2);
+        remove(rom2);
+    }
+
     sql_free(&s);
     remove(rom); remove(disk);
     printf("%s (%d failed)\n", fails ? "FAIL" : "ok", fails);

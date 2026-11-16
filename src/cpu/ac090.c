@@ -1980,6 +1980,7 @@ void ac090_init(ac090 *c, int model) {
     c->model = model;
     c->stk_span = 0xffffffffu;                  /* adaptive stacks: no window until a board watches */
     c->addr_mask = 0x00ffffff;
+    c->dbg_temp = c->dbg_skip = 1;              /* the debugger: no temporary breakpoint, nothing to skip */
     c->bus.read = no_read;
     c->bus.write = no_write;
     if (model == AC090_68000 && !table_ready) { build(table, model); table_ready = 1; }
@@ -2170,6 +2171,20 @@ static inline __attribute__((always_inline)) int plain_run(ac090 *c, handler *t,
  * function that calls setjmp keeps its locals in memory, so c and the
  * table were reloaded from the stack all through the loop. A fault
  * longjmps back to ac090_run, which calls this again. */
+/* The debugger: stop before the instruction at c->pc? */
+static int dbg_hit(ac090 *c) {
+    if (c->dbg_stop) return 1;
+    uint32_t pc = c->pc;
+    if (pc == c->dbg_skip) { c->dbg_skip = 1; return 0; }
+    int why = 0;
+    if (pc == c->dbg_temp) { why = AC090_DBG_TEMP; c->dbg_temp = 1; }
+    for (int i = 0; i < c->dbg_nbp && !why; i++) if (c->dbg_bp[i] == pc) why = AC090_DBG_BP;
+    if (!why) return 0;
+    c->dbg_stop = 1;
+    c->dbg_why = why;
+    return 1;
+}
+
 static __attribute__((noinline)) void run_loop(ac090 *c, handler *t) {
     while (c->clock < c->run_end && !c->halted) {
 #ifndef AC090_TRACE
@@ -2192,7 +2207,7 @@ static __attribute__((noinline)) void run_loop(ac090 *c, handler *t) {
          *  - with it, every word goes through fetch_cached, as below;
          *  - paced, each instruction's own cycles are scaled exactly as
          *    below, its bus waits not. */
-        if (!(((c->irq > (int)c->ipl) | (c->irq == 7)) | c->stopped | c->mmu_on | c->berr_regs | c->pf_len | c->t1 | c->t0)) {
+        if (!(((c->irq > (int)c->ipl) | (c->irq == 7)) | c->stopped | c->mmu_on | c->berr_regs | c->pf_len | c->t1 | c->t0 | c->dbg_on)) {
             c->recheck = 0;
             const int paced = c->pace1024 != 0, cached = (c->cacr & 1) && !c->jit_on;
             int general = cached ? (paced ? plain_run(c, t, 1, 1) : plain_run(c, t, 0, 1))
@@ -2203,6 +2218,7 @@ static __attribute__((noinline)) void run_loop(ac090 *c, handler *t) {
 #endif
         if (c->irq) take_irq(c);
         if (c->stopped) { c->clock = c->run_end; break; }
+        if (c->dbg_on && dbg_hit(c)) break;
         if (c->mmu_on | c->berr_regs) { memcpy(c->mmu_regs, c->d, sizeof c->mmu_regs); c->mmu_regs_valid = 1; }   /* an access fault restarts the instruction */
         c->op_pc = c->pc;
         uint64_t paced_from = c->clock, waited_from = c->bus_waited;
@@ -2229,11 +2245,13 @@ static __attribute__((noinline)) void run_loop(ac090 *c, handler *t) {
 #endif
         if (c->pace1024) { uint64_t waits = c->bus_waited - waited_from, own = (c->clock - paced_from - waits) * c->pace1024 + c->pace_rem; c->clock = paced_from + (own >> 10) + waits; c->pace_rem = (uint32_t)(own & 1023); }
         c->instructions++;
+        if (c->dbg_steps && !--c->dbg_steps) { c->dbg_stop = 1; c->dbg_why = AC090_DBG_STEP; break; }
     }
 }
 
 uint64_t ac090_run(ac090 *c, uint64_t clocks) {
     uint64_t start = c->instructions;
+    if (c->dbg_on && c->dbg_stop) return 0;  /* stopped in the debugger: not even an interrupt taken */
     c->run_end = c->clock + clocks;
     if (setjmp(c->abort)) {
         c->run_page = NULL;                  /* a fault out of a run */
