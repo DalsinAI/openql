@@ -18,6 +18,9 @@ Not yet: the QL's own network (QLAN) wire.
 
 New since v0.1.0:
 
+- **A debugger** (Ctrl+F11, or the F12 menu): the CPU's registers (editable), breakpoints, step, step over, run to a line, and the code and memory, in a window of the host's own controls. Its disassembler knows the 68000 to the 68040, the 68040's FPU and MMU instructions too, and reads through SMSQ/E's MMU tables as the CPU does. `-b ADDR` stops a run without a window at an address and prints the registers and the code.
+- **High colour from the start** on the Super QL: SMSQ/E can start in 16-bit colour at 512 x 256 or 1024 x 512 (`-g high`, `-g large`, the launcher, or the F12 menu for the next reset), set in SMSQ/E's own configuration in the ROM as it loads.
+
 - **A launcher**: `openql` on its own opens a window of the host's own controls (GTK, Win32 or Cocoa, in the system font, under a black and silver Sinclair header) to choose the machine, memory, disks, picture, speed and sound, and to **Get QL/E** (downloaded from sinclairql.net and put in WIN1_ with the settings it wants) or fetch the ROMs. It remembers the choices.
 - **A menu on F12**, a host window too: swap floppies and cartridges (or make a blank one), saved states in four slots, type the clipboard in (also Ctrl+Shift+V), speed (2x, 4x, as fast as it goes; Ctrl+F8), the picture's scaling (4:3, whole pixels, fill), full screen, reset, back to the launcher.
 - **A host folder as a disk**: `-D FOLDER` (or the launcher, or the menu) puts a folder on the host in the Super QL's FLP2_ as a QL disk, and writes what the QL saved back to it when the disk comes out.

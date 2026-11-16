@@ -1,5 +1,6 @@
 /* openql's launcher and menu, in the host's own controls (gui.h). */
 #include "gui.h"
+#include "debug.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -146,12 +147,13 @@ static const char *const sql_ram_names[] = { "16 MB", "32 MB", "64 MB", "128 MB"
 static const int sql_rams[] = { 16, 32, 64, 128 };
 static const char *const scales[] = { "4:3, as large as the window", "4:3, in whole pixels", "Fill the window", NULL };
 static const char *const speeds[] = { "Real time", "2 \xc3\x97", "4 \xc3\x97", "As fast as it goes", NULL };
+static const char *const displays[] = { "QL colours, 512 \xc3\x97 256 (mode 4)", "High colour, 512 \xc3\x97 256", "High colour, 1024 \xc3\x97 512", NULL };
 
 static struct launcher {
     settings *cfg;
     uiWindow *win;
-    uiCombobox *machine, *ram_ql, *ram_sql, *scale, *speed;
-    uiLabel *rom;
+    uiCombobox *machine, *ram_ql, *ram_sql, *scale, *speed, *display;
+    uiLabel *rom, *display_ql;
     uiButton *rom_choose, *rom_default;
     uiGroup *disks_sql, *disks_ql;
     disk_row win1, flp[2], host, mdv[2];
@@ -199,6 +201,8 @@ static void launcher_refresh(void) {
     enable(uiControl(L.start), !busy);
     uiComboboxSetSelected(L.scale, c->scale);
     uiComboboxSetSelected(L.speed, c->speed);
+    uiComboboxSetSelected(L.display, c->display);
+    show(uiControl(L.display), sql); show(uiControl(L.display_ql), !sql);
     uiCheckboxSetChecked(L.full, c->fullscreen);
     uiCheckboxSetChecked(L.sound, c->sound);
     uiCheckboxSetChecked(L.at_start, c->launcher);
@@ -216,6 +220,7 @@ static void on_ram(uiCombobox *b, void *d) {
 }
 static void on_scale(uiCombobox *b, void *d) { (void)d; if (uiComboboxSelected(b) >= 0) L.cfg->scale = uiComboboxSelected(b); }
 static void on_speed(uiCombobox *b, void *d) { (void)d; if (uiComboboxSelected(b) >= 0) L.cfg->speed = uiComboboxSelected(b); }
+static void on_display(uiCombobox *b, void *d) { (void)d; if (uiComboboxSelected(b) >= 0) L.cfg->display = uiComboboxSelected(b); }
 static void on_check(uiCheckbox *b, void *d) { *(int *)d = uiCheckboxChecked(b); }
 static void on_full(uiCheckbox *b, void *d) { (void)d; L.cfg->fullscreen = uiCheckboxChecked(b); }
 
@@ -368,6 +373,13 @@ static void launcher_build(void) {
     L.speed = combo(speeds);
     uiComboboxOnSelected(L.speed, on_speed, NULL);
     uiFormAppend(pf, "Speed", uiControl(L.speed), 0);
+    uiBox *disp = hbox();
+    L.display = combo(displays);
+    uiComboboxOnSelected(L.display, on_display, NULL);
+    L.display_ql = uiNewLabel("QL modes 4 and 8, as the QL has them");
+    uiBoxAppend(disp, uiControl(L.display), 1);
+    uiBoxAppend(disp, uiControl(L.display_ql), 1);
+    uiFormAppend(pf, "Display", uiControl(disp), 0);
     uiBox *checks = hbox();
     L.full = uiNewCheckbox("Full screen");
     L.sound = uiNewCheckbox("Sound");
@@ -422,8 +434,9 @@ static struct menu {
     disk_row disk[2];
     uiButton *blank, *host, *host_write;
     uiLabel *win1;
-    uiCombobox *slot, *speed, *scale;
-    uiButton *save, *load, *paste, *reset, *power, *settings, *quit, *resume;
+    uiCombobox *slot, *speed, *scale, *display;
+    uiLabel *display_note;
+    uiButton *save, *load, *paste, *reset, *power, *settings, *quit, *resume, *debugger;
     uiCheckbox *full;
     uiLabel *status;
     int result;
@@ -454,6 +467,9 @@ static void menu_refresh(void) {
     enable(uiControl(M.load), app_state_exists(slot));
     uiComboboxSetSelected(M.speed, M.cfg->speed);
     uiComboboxSetSelected(M.scale, M.cfg->scale);
+    uiComboboxSetSelected(M.display, M.cfg->display);
+    show(uiControl(M.display), !ql);
+    uiLabelSetText(M.display_note, ql ? "QL modes 4 and 8, as the QL has them" : "from the next reset");
     uiCheckboxSetChecked(M.full, M.cfg->fullscreen);
     int bad;
     uiLabelSetText(M.status, app_status(&bad));
@@ -486,6 +502,14 @@ static void m_paste(uiButton *b, void *d) { (void)b; (void)d; app_paste(); M.res
 static void m_speed(uiCombobox *c, void *d) { (void)d; if (uiComboboxSelected(c) >= 0) M.cfg->speed = uiComboboxSelected(c); }
 static void m_scale(uiCombobox *c, void *d) { (void)d; if (uiComboboxSelected(c) >= 0) M.cfg->scale = uiComboboxSelected(c); app_redraw(); }
 static void m_full(uiCheckbox *c, void *d) { (void)d; M.cfg->fullscreen = uiCheckboxChecked(c); }
+static void m_display(uiCombobox *c, void *d) {
+    (void)d;
+    if (uiComboboxSelected(c) < 0) return;
+    M.cfg->display = uiComboboxSelected(c);
+    app_display(M.cfg->display);
+    menu_refresh();
+}
+static void m_debugger(uiButton *b, void *d) { (void)b; (void)d; M.result = GUI_DEBUG; }
 static void m_reset(uiButton *b, void *d) { (void)b; app_reset(d != NULL); M.result = GUI_RESUME; }
 static void m_settings(uiButton *b, void *d) { (void)b; (void)d; M.result = GUI_SETTINGS; }
 static void m_quit(uiButton *b, void *d) { (void)b; (void)d; M.result = GUI_QUIT; }
@@ -545,6 +569,13 @@ static void menu_build(void) {
     M.scale = combo(scales);
     uiComboboxOnSelected(M.scale, m_scale, NULL);
     uiFormAppend(f, "Picture", uiControl(M.scale), 0);
+    uiBox *disp = hbox();
+    M.display = combo(displays);
+    uiComboboxOnSelected(M.display, m_display, NULL);
+    M.display_note = uiNewLabel("");
+    uiBoxAppend(disp, uiControl(M.display), 0);
+    uiBoxAppend(disp, uiControl(M.display_note), 1);
+    uiFormAppend(f, "Display", uiControl(disp), 0);
     M.full = uiNewCheckbox("Full screen");
     uiCheckboxOnToggled(M.full, m_full, NULL);
     uiFormAppend(f, "", uiControl(M.full), 0);
@@ -564,12 +595,15 @@ static void menu_build(void) {
     uiBox *bar = hbox();
     M.status = uiNewLabel("");
     M.settings = uiNewButton("Settings\xe2\x80\xa6");
+    M.debugger = uiNewButton("Debugger\xe2\x80\xa6");
+    uiButtonOnClicked(M.debugger, m_debugger, NULL);
     M.quit = uiNewButton("Quit");
     M.resume = uiNewButton("Back to the machine");
     uiButtonOnClicked(M.settings, m_settings, NULL);
     uiButtonOnClicked(M.quit, m_quit, NULL);
     uiButtonOnClicked(M.resume, m_resume, NULL);
     uiBoxAppend(bar, uiControl(M.status), 1);
+    uiBoxAppend(bar, uiControl(M.debugger), 0);
     uiBoxAppend(bar, uiControl(M.settings), 0);
     uiBoxAppend(bar, uiControl(M.quit), 0);
     uiBoxAppend(bar, uiControl(M.resume), 0);
@@ -598,12 +632,488 @@ int gui_menu(settings *cfg) {
     return M.result;
 }
 
+/* ---- the debugger ----------------------------------------------------------------- */
+
+/* The registers, editable while the CPU is stopped; the code about the PC
+ * (or wherever was asked) and memory, drawn in the host's fixed-width font
+ * in two areas. Click a line of code to choose it, double-click it for a
+ * breakpoint; once clicked, the arrow and page keys move through either. */
+
+#if defined(_WIN32)
+#define MONO "Consolas"
+#elif defined(__APPLE__)
+#define MONO "Menlo"
+#else
+#define MONO "Monospace"
+#endif
+
+enum { NREGS = 21, MAXROWS = 160 };
+static const char *const reg_names[NREGS] = {
+    "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+    "pc", "sr", "usp", "ssp", "vbr",
+};
+
+static struct debugger {
+    uiWindow *win;
+    int open, building;
+    uiButton *brk, *cont, *step, *over, *run_to, *bp, *bp_clear, *go_code, *go_mem, *poke;
+    uiEntry *reg[NREGS];
+    uiLabel *flags, *status, *bps, *count;
+    uiEntry *code_at, *mem_at, *poke_bytes;
+    uiCheckbox *follow;
+    uiArea *code, *mem;
+    uint32_t code_top, mem_top, chosen;   /* chosen: the line clicked (odd: none) */
+    uint32_t lines_at[MAXROWS];           /* the code's lines' addresses, as last drawn */
+    int nlines, mem_rows;
+    double line_h;
+    int was_stopped;
+    uint64_t was_ins;
+    unsigned ticks;
+} D = { .chosen = 1 };
+
+static uiFontDescriptor mono_font(void) {
+    static char fam[] = MONO;
+    uiFontDescriptor f;
+    f.Family = fam;
+    f.Size = 10;
+    f.Weight = uiTextWeightNormal;
+    f.Italic = uiTextItalicNormal;
+    f.Stretch = uiTextStretchNormal;
+    return f;
+}
+
+/* text at x, y (its top) in the fixed-width font; its height, and its width in *w */
+static double mono_text(uiDrawContext *c, const char *t, double x, double y, double r, double g, double b, double *w) {
+    uiFontDescriptor f = mono_font();
+    uiAttributedString *as = uiNewAttributedString(t);
+    if (t[0]) uiAttributedStringSetAttribute(as, uiNewColorAttribute(r, g, b, 1), 0, strlen(t));
+    uiDrawTextLayoutParams p = { as, &f, 4000, uiDrawTextAlignLeft };
+    uiDrawTextLayout *tl = uiDrawNewTextLayout(&p);
+    double tw, th;
+    uiDrawTextLayoutExtents(tl, &tw, &th);
+    if (c) uiDrawText(c, tl, x, y);
+    uiDrawFreeTextLayout(tl);
+    uiFreeAttributedString(as);
+    if (w) *w = tw;
+    return th;
+}
+
+static double line_height(void) {
+    if (D.line_h <= 0) {
+        double h = mono_text(NULL, "Mg$0", 0, 0, 0, 0, 0, NULL);
+        D.line_h = h > 4 ? h + 2 : 16;
+    }
+    return D.line_h;
+}
+
+static void code_draw(uiAreaHandler *h, uiArea *a, uiAreaDrawParams *p) {
+    (void)h; (void)a;
+    ac090 *c = app_cpu();
+    fill(p->Context, 0, 0, p->AreaWidth, p->AreaHeight, 1, 1, 1);
+    D.nlines = 0;
+    if (!c) return;
+    double lh = line_height(), mark = lh * 0.9;
+    int rows = (int)(p->AreaHeight / lh);
+    if (rows < 1) rows = 1;
+    if (rows > MAXROWS) rows = MAXROWS;
+    uint32_t at = D.code_top;
+    for (int i = 0; i < rows; i++) {
+        char t[200], hex[48] = "", line[300];
+        int len = dbg_disasm(c, at, t, sizeof t);
+        for (int k = 0; k < len && k < 10; k += 2) {
+            uint8_t hi, lo;
+            size_t n = strlen(hex);
+            if (dbg_peek(c, at + (uint32_t)k, &hi) && dbg_peek(c, at + (uint32_t)k + 1, &lo)) snprintf(hex + n, sizeof hex - n, "%02x%02x ", hi, lo);
+            else snprintf(hex + n, sizeof hex - n, "---- ");
+        }
+        if (len > 10) strncat(hex, "+", sizeof hex - strlen(hex) - 1);
+        double y = i * lh;
+        int here = at == c->pc && !c->halted;
+        if (here) fill(p->Context, 0, y, p->AreaWidth, lh, 0.78, 0.78, 0.79);     /* the QL's silver */
+        else if (at == D.chosen) fill(p->Context, 0, y, p->AreaWidth, lh, 0.91, 0.91, 0.92);
+        if (dbg_bp_at(c, at)) mono_text(p->Context, "\xe2\x97\x8f", 4, y + 1, 0.80, 0.06, 0.06, NULL);
+        if (here) mono_text(p->Context, "\xe2\x96\xb6", 4 + mark, y + 1, 0, 0, 0, NULL);
+        snprintf(line, sizeof line, "%08x  %-22s%s", at, hex, t);
+        mono_text(p->Context, line, 4 + 2 * mark, y + 1, 0.05, 0.05, 0.05, NULL);
+        D.lines_at[i] = at;
+        at += (uint32_t)len;
+    }
+    D.nlines = rows;
+}
+
+static void mem_draw(uiAreaHandler *h, uiArea *a, uiAreaDrawParams *p) {
+    (void)h; (void)a;
+    ac090 *c = app_cpu();
+    fill(p->Context, 0, 0, p->AreaWidth, p->AreaHeight, 1, 1, 1);
+    if (!c) return;
+    double lh = line_height();
+    int rows = (int)(p->AreaHeight / lh);
+    if (rows < 1) rows = 1;
+    D.mem_rows = rows;
+    for (int i = 0; i < rows; i++) {
+        uint32_t at = D.mem_top + 16u * (uint32_t)i;
+        char line[120], asc[17];
+        int n = snprintf(line, sizeof line, "%08x ", at);
+        for (int k = 0; k < 16; k++) {
+            uint8_t v;
+            if (dbg_peek(c, at + (uint32_t)k, &v)) {
+                n += snprintf(line + n, sizeof line - (size_t)n, "%s%02x", k == 8 ? "  " : " ", v);
+                asc[k] = v >= 32 && v < 127 ? (char)v : '.';
+            } else {
+                n += snprintf(line + n, sizeof line - (size_t)n, "%s--", k == 8 ? "  " : " ");
+                asc[k] = ' ';
+            }
+        }
+        asc[16] = 0;
+        snprintf(line + n, sizeof line - (size_t)n, "  %s", asc);
+        mono_text(p->Context, line, 4, i * lh + 1, 0.05, 0.05, 0.05, NULL);
+    }
+}
+
+static void debug_refresh(int all);
+
+static void follow_off(void) { uiCheckboxSetChecked(D.follow, 0); }
+
+static void code_mouse(uiAreaHandler *h, uiArea *a, uiAreaMouseEvent *e) {
+    (void)h; (void)a;
+    ac090 *c = app_cpu();
+    if (!c || e->Down != 1) return;
+    int row = (int)(e->Y / line_height());
+    if (row < 0 || row >= D.nlines) return;
+    D.chosen = D.lines_at[row];
+    char t[16];
+    snprintf(t, sizeof t, "%08x", D.chosen);
+    uiEntrySetText(D.code_at, t);
+    if (e->Count >= 2) dbg_bp_toggle(c, D.chosen);
+    debug_refresh(0);
+}
+
+static int code_key(uiAreaHandler *h, uiArea *a, uiAreaKeyEvent *e) {
+    (void)h; (void)a;
+    ac090 *c = app_cpu();
+    if (!c || e->Up) return 0;
+    char t[200];
+    int page = D.nlines > 2 ? D.nlines - 2 : 1;
+    switch (e->ExtKey) {
+    case uiExtKeyUp: D.code_top = dbg_back(c, D.code_top, 1); break;
+    case uiExtKeyDown: D.code_top += (uint32_t)dbg_disasm(c, D.code_top, t, sizeof t); break;
+    case uiExtKeyPageUp: D.code_top = dbg_back(c, D.code_top, page); break;
+    case uiExtKeyPageDown: for (int i = 0; i < page; i++) D.code_top += (uint32_t)dbg_disasm(c, D.code_top, t, sizeof t); break;
+    default: return 0;
+    }
+    follow_off();
+    uiAreaQueueRedrawAll(D.code);
+    return 1;
+}
+
+static int mem_key(uiAreaHandler *h, uiArea *a, uiAreaKeyEvent *e) {
+    (void)h; (void)a;
+    if (e->Up) return 0;
+    uint32_t page = 16u * (uint32_t)(D.mem_rows > 2 ? D.mem_rows - 2 : 1);
+    switch (e->ExtKey) {
+    case uiExtKeyUp: D.mem_top -= 16; break;
+    case uiExtKeyDown: D.mem_top += 16; break;
+    case uiExtKeyPageUp: D.mem_top -= page; break;
+    case uiExtKeyPageDown: D.mem_top += page; break;
+    default: return 0;
+    }
+    char t[16];
+    snprintf(t, sizeof t, "%08x", D.mem_top);
+    uiEntrySetText(D.mem_at, t);
+    uiAreaQueueRedrawAll(D.mem);
+    return 1;
+}
+
+static uiAreaHandler code_handler = { code_draw, code_mouse, no_cross, no_drag, code_key };
+static uiAreaHandler mem_handler = { mem_draw, no_mouse, no_cross, no_drag, mem_key };
+
+/* an address typed in an entry: 0, or -1 with the status saying so */
+static int entry_addr(uiEntry *e, uint32_t *v) {
+    ac090 *c = app_cpu();
+    char *t = uiEntryText(e);
+    int rc = c ? dbg_parse(c, t, v) : -1;
+    if (rc) {
+        char m[160];
+        snprintf(m, sizeof m, "\"%.60s\" is not an address: hex, a register, or one with +/- hex", t);
+        uiLabelSetText(D.status, m);
+    }
+    uiFreeText(t);
+    return rc;
+}
+
+/* the line chosen, else the code address typed */
+static int target(uint32_t *v) {
+    if (!(D.chosen & 1)) { *v = D.chosen; return 0; }
+    return entry_addr(D.code_at, v);
+}
+
+static void d_break(uiButton *b, void *d) { (void)b; (void)d; if (app_cpu()) dbg_break(app_cpu()); debug_refresh(1); }
+static void d_cont(uiButton *b, void *d) { (void)b; (void)d; if (app_cpu()) dbg_continue(app_cpu()); debug_refresh(1); }
+static void d_step(uiButton *b, void *d) { (void)b; (void)d; if (app_cpu()) dbg_step(app_cpu()); }
+static void d_over(uiButton *b, void *d) { (void)b; (void)d; if (app_cpu()) dbg_step_over(app_cpu()); }
+static void d_run_to(uiButton *b, void *d) {
+    (void)b; (void)d;
+    uint32_t a;
+    if (app_cpu() && target(&a) == 0) { dbg_run_to(app_cpu(), a); debug_refresh(1); }
+}
+static void d_bp(uiButton *b, void *d) {
+    (void)b; (void)d;
+    uint32_t a;
+    if (app_cpu() && target(&a) == 0 && dbg_bp_toggle(app_cpu(), a) < 0) uiLabelSetText(D.status, "No more breakpoints: clear some first");
+    debug_refresh(0);
+}
+static void d_bp_clear(uiButton *b, void *d) { (void)b; (void)d; if (app_cpu()) dbg_bp_clear(app_cpu()); debug_refresh(0); }
+static void d_go_code(uiButton *b, void *d) {
+    (void)b; (void)d;
+    uint32_t a;
+    if (entry_addr(D.code_at, &a) == 0) { D.code_top = a & ~1u; D.chosen = 1; follow_off(); uiAreaQueueRedrawAll(D.code); }
+}
+static void d_go_mem(uiButton *b, void *d) {
+    (void)b; (void)d;
+    uint32_t a;
+    if (entry_addr(D.mem_at, &a) == 0) { D.mem_top = a & ~15u; uiAreaQueueRedrawAll(D.mem); }
+}
+static void d_follow(uiCheckbox *c, void *d) { (void)c; (void)d; debug_refresh(0); }
+
+/* bytes in hex ("4e 71", "4e71") written from the memory address on */
+static void d_poke(uiButton *b, void *d) {
+    (void)b; (void)d;
+    ac090 *c = app_cpu();
+    uint32_t a;
+    if (!c || entry_addr(D.mem_at, &a)) return;
+    char *t = uiEntryText(D.poke_bytes), m[120];
+    int n = 0, bad = 0, nib = -1;
+    for (const char *p = t; *p && !bad; p++) {
+        int v = *p >= '0' && *p <= '9' ? *p - '0' : *p >= 'a' && *p <= 'f' ? *p - 'a' + 10 : *p >= 'A' && *p <= 'F' ? *p - 'A' + 10 : -1;
+        if (v < 0) { if (*p == ' ' || *p == ',' || *p == '$') { if (nib >= 0) bad = 1; continue; } bad = 1; break; }
+        if (nib < 0) { nib = v; continue; }
+        if (!dbg_poke(c, a + (uint32_t)n, (uint8_t)(nib << 4 | v))) { bad = 2; break; }
+        n++;
+        nib = -1;
+    }
+    if (nib >= 0 && !bad) bad = 1;
+    uiFreeText(t);
+    if (bad == 2) snprintf(m, sizeof m, "%d bytes written; $%08x is not RAM", n, a + (uint32_t)n);
+    else if (bad) snprintf(m, sizeof m, "Bytes in hex, two digits each: 4e 71");
+    else snprintf(m, sizeof m, "%d byte%s written at $%08x", n, n == 1 ? "" : "s", a);
+    uiLabelSetText(D.status, m);
+    uiAreaQueueRedrawAll(D.mem);
+    uiAreaQueueRedrawAll(D.code);
+}
+
+static void d_reg(uiEntry *e, void *d) {
+    const char *name = d;
+    ac090 *c = app_cpu();
+    if (!c || !dbg_stopped(c) || D.building) return;
+    char *t = uiEntryText(e), *p = t, *end;
+    while (*p == ' ' || *p == '$') p++;
+    unsigned long v = strtoul(p, &end, 16);
+    int ok = end != p && *end == 0;
+    uiFreeText(t);
+    if (!ok) return;
+    dbg_set_reg(c, name, (uint32_t)v);
+    char fl[40];
+    dbg_sr_text(ac090_get_sr(c), fl, sizeof fl);
+    uiLabelSetText(D.flags, fl);
+    if (!strcmp(name, "pc") || !strcmp(name, "sr")) uiAreaQueueRedrawAll(D.code);
+}
+
+static int d_close(uiWindow *w, void *d) {
+    (void)w; (void)d;
+    uiControlHide(uiControl(D.win));
+    D.open = 0;
+    if (app_cpu()) dbg_release(app_cpu());
+    return 0;
+}
+
+static void debug_build(void) {
+    D.building = 1;
+    D.win = uiNewWindow("OpenQL: Debugger", 1000, 720, 0);
+    uiWindowSetMargined(D.win, 1);
+    uiWindowOnClosing(D.win, d_close, NULL);
+    uiBox *top = vbox();
+
+    uiBox *bar = hbox();
+    D.brk = uiNewButton("Break");
+    D.cont = uiNewButton("Continue");
+    D.step = uiNewButton("Step");
+    D.over = uiNewButton("Step over");
+    uiButtonOnClicked(D.brk, d_break, NULL);
+    uiButtonOnClicked(D.cont, d_cont, NULL);
+    uiButtonOnClicked(D.step, d_step, NULL);
+    uiButtonOnClicked(D.over, d_over, NULL);
+    D.status = uiNewLabel("");
+    D.count = uiNewLabel("");
+    uiBoxAppend(bar, uiControl(D.brk), 0);
+    uiBoxAppend(bar, uiControl(D.cont), 0);
+    uiBoxAppend(bar, uiControl(D.step), 0);
+    uiBoxAppend(bar, uiControl(D.over), 0);
+    uiBoxAppend(bar, uiControl(D.status), 1);
+    uiBoxAppend(bar, uiControl(D.count), 0);
+    uiBoxAppend(top, uiControl(bar), 0);
+
+    uiBox *body = hbox();
+    uiBox *left = vbox();
+    uiGrid *g = uiNewGrid();
+    uiGridSetPadded(g, 1);
+    for (int i = 0; i < NREGS; i++) {
+        char up[8];
+        snprintf(up, sizeof up, "%s", reg_names[i]);
+        for (char *q = up; *q; q++) *q = (char)(*q >= 'a' && *q <= 'z' ? *q - 32 : *q);
+        D.reg[i] = uiNewEntry();
+        uiEntryOnChanged(D.reg[i], d_reg, (void *)reg_names[i]);
+        int col = i < 16 ? (i >= 8) * 2 : (i - 16) % 2 * 2, row = i < 16 ? i % 8 : 8 + (i - 16) / 2;
+        uiGridAppend(g, uiControl(uiNewLabel(up)), col, row, 1, 1, 0, uiAlignEnd, 0, uiAlignCenter);
+        uiGridAppend(g, uiControl(D.reg[i]), col + 1, row, 1, 1, 1, uiAlignFill, 0, uiAlignCenter);
+    }
+    D.flags = uiNewLabel("");
+    uiGridAppend(g, uiControl(D.flags), 2, 10, 2, 1, 1, uiAlignStart, 0, uiAlignCenter);
+    uiBoxAppend(left, uiControl(group("Registers", uiControl(g))), 0);
+    uiBox *bv = vbox();
+    D.bps = uiNewLabel("");
+    D.bp_clear = uiNewButton("Clear them all");
+    uiButtonOnClicked(D.bp_clear, d_bp_clear, NULL);
+    uiBoxAppend(bv, uiControl(D.bps), 1);
+    uiBoxAppend(bv, uiControl(D.bp_clear), 0);
+    uiBoxAppend(left, uiControl(group("Breakpoints", uiControl(bv))), 1);
+    uiBoxAppend(body, uiControl(left), 0);
+
+    uiBox *right = vbox();
+    uiBox *cv = vbox();
+    uiBox *crow = hbox();
+    D.code_at = uiNewEntry();
+    D.go_code = uiNewButton("Show");
+    D.follow = uiNewCheckbox("Follow the PC");
+    uiCheckboxSetChecked(D.follow, 1);
+    D.bp = uiNewButton("Breakpoint");
+    D.run_to = uiNewButton("Run to here");
+    uiButtonOnClicked(D.go_code, d_go_code, NULL);
+    uiCheckboxOnToggled(D.follow, d_follow, NULL);
+    uiButtonOnClicked(D.bp, d_bp, NULL);
+    uiButtonOnClicked(D.run_to, d_run_to, NULL);
+    uiBoxAppend(crow, uiControl(uiNewLabel("Address")), 0);
+    uiBoxAppend(crow, uiControl(D.code_at), 1);
+    uiBoxAppend(crow, uiControl(D.go_code), 0);
+    uiBoxAppend(crow, uiControl(D.follow), 0);
+    uiBoxAppend(crow, uiControl(D.bp), 0);
+    uiBoxAppend(crow, uiControl(D.run_to), 0);
+    uiBoxAppend(cv, uiControl(crow), 0);
+    D.code = uiNewArea(&code_handler);
+    uiBoxAppend(cv, uiControl(D.code), 1);
+    uiBoxAppend(right, uiControl(group("Code", uiControl(cv))), 1);
+
+    uiBox *mv = vbox();
+    uiBox *mrow = hbox();
+    D.mem_at = uiNewEntry();
+    D.go_mem = uiNewButton("Show");
+    D.poke_bytes = uiNewEntry();
+    D.poke = uiNewButton("Write");
+    uiButtonOnClicked(D.go_mem, d_go_mem, NULL);
+    uiButtonOnClicked(D.poke, d_poke, NULL);
+    uiBoxAppend(mrow, uiControl(uiNewLabel("Address")), 0);
+    uiBoxAppend(mrow, uiControl(D.mem_at), 1);
+    uiBoxAppend(mrow, uiControl(D.go_mem), 0);
+    uiBoxAppend(mrow, uiControl(uiNewLabel("Bytes")), 0);
+    uiBoxAppend(mrow, uiControl(D.poke_bytes), 1);
+    uiBoxAppend(mrow, uiControl(D.poke), 0);
+    uiBoxAppend(mv, uiControl(mrow), 0);
+    D.mem = uiNewArea(&mem_handler);
+    uiBoxAppend(mv, uiControl(D.mem), 1);
+    uiBoxAppend(right, uiControl(group("Memory (RAM and ROM; the hardware's registers show as --)", uiControl(mv))), 1);
+    uiBoxAppend(body, uiControl(right), 1);
+    uiBoxAppend(top, uiControl(body), 1);
+    uiBoxAppend(top, uiControl(uiNewLabel("Click a line of code to choose it, double-click it for a breakpoint. Once clicked, "
+                                           "\xe2\x86\x91 \xe2\x86\x93 Page Up and Page Down move through the code or memory. "
+                                           "An address: hex, a register (a6), or one plus or minus hex (a7+$10).")), 0);
+    uiWindowSetChild(D.win, uiControl(top));
+    D.building = 0;
+}
+
+static void debug_refresh(int all) {
+    ac090 *c = app_cpu();
+    if (!D.win || !c) return;
+    int stopped = dbg_stopped(c);
+    D.building = 1;
+    enable(uiControl(D.brk), !stopped && !c->halted);
+    enable(uiControl(D.cont), stopped);
+    enable(uiControl(D.step), stopped);
+    enable(uiControl(D.over), stopped);
+    enable(uiControl(D.run_to), stopped);
+    char t[160];
+    if (all || !stopped) {
+        for (int i = 0; i < NREGS; i++) {
+            uint32_t v = 0;
+            dbg_get_reg(c, reg_names[i], &v);
+            snprintf(t, sizeof t, i == 17 ? "%04x" : "%08x", v);
+            uiEntrySetText(D.reg[i], t);
+            uiEntrySetReadOnly(D.reg[i], !stopped);
+        }
+        if (c->model == AC090_68000) uiEntrySetReadOnly(D.reg[20], 1);   /* the 68008 has no VBR */
+    }
+    dbg_sr_text(ac090_get_sr(c), t, sizeof t);
+    uiLabelSetText(D.flags, t);
+    if (stopped || c->halted) snprintf(t, sizeof t, "%s, at $%08x", dbg_why(c), c->pc);
+    else snprintf(t, sizeof t, "Running");
+    uiLabelSetText(D.status, t);
+    snprintf(t, sizeof t, "%s, %llu instructions", app_is_ql() ? "68008" : "68040", (unsigned long long)c->instructions);
+    uiLabelSetText(D.count, t);
+    char list[400] = "";
+    for (int i = 0; i < c->dbg_nbp; i++) {
+        size_t n = strlen(list);
+        snprintf(list + n, sizeof list - n, "%s$%08x", i ? (i % 2 ? "   " : "\n") : "", c->dbg_bp[i]);
+    }
+    uiLabelSetText(D.bps, c->dbg_nbp ? list : "None. Double-click a line of code.");
+    enable(uiControl(D.bp_clear), c->dbg_nbp > 0);
+    if (uiCheckboxChecked(D.follow)) {
+        int in = 0;
+        for (int i = 0; i + 2 < D.nlines; i++) if (D.lines_at[i] == c->pc) in = 1;
+        if (!in) D.code_top = dbg_back(c, c->pc, 4);
+    }
+    D.building = 0;
+    uiAreaQueueRedrawAll(D.code);
+    uiAreaQueueRedrawAll(D.mem);
+}
+
+void gui_debug_open(void) {
+    if (!inited) return;
+    ac090 *c = app_cpu();
+    if (!D.win) {
+        debug_build();
+        if (c) {
+            D.code_top = dbg_back(c, c->pc, 4);
+            D.mem_top = c->a[7] & ~15u;
+            char t[16];
+            snprintf(t, sizeof t, "%08x", D.mem_top);
+            uiEntrySetText(D.mem_at, t);
+        }
+    }
+    D.open = 1;
+    D.was_stopped = -1;
+    uiControlShow(uiControl(D.win));
+    debug_refresh(1);
+}
+
+int gui_debug_is_open(void) { return D.open; }
+
+void gui_debug_tick(void) {
+    if (!D.open) return;
+    gui_pump();
+    ac090 *c = app_cpu();
+    if (!c || !D.open) return;
+    int stopped = dbg_stopped(c);
+    if (stopped != D.was_stopped || (stopped && c->instructions != D.was_ins)) debug_refresh(1);
+    else if (!stopped && ++D.ticks % 10 == 0) debug_refresh(0);   /* running: five times a second */
+    D.was_stopped = stopped;
+    D.was_ins = c->instructions;
+}
+
 void gui_quit(void) {
     if (!inited) return;
     /* libui wants every window gone before it ends */
     if (L.win) uiControlDestroy(uiControl(L.win));
     if (M.win) uiControlDestroy(uiControl(M.win));
-    L.win = NULL; M.win = NULL;
+    if (D.win) uiControlDestroy(uiControl(D.win));
+    L.win = NULL; M.win = NULL; D.win = NULL;
     uiUninit();
     inited = 0;
 }

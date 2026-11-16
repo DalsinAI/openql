@@ -12,6 +12,7 @@
 enum { SET_QL, SET_SUPERQL };
 enum { SCALE_43, SCALE_INTEGER, SCALE_STRETCH, SCALE_MODES };
 enum { SPEED_1, SPEED_2, SPEED_4, SPEED_MAX, SPEEDS };
+enum { DISPLAY_QL, DISPLAY_HIGH, DISPLAY_LARGE, DISPLAYS };   /* the Super QL's: QL mode 4; 512 x 256 or 1024 x 512 in 16-bit colour */
 
 typedef struct settings {
     int machine;                    /* SET_QL or SET_SUPERQL */
@@ -23,6 +24,7 @@ typedef struct settings {
     char mdv[2][SET_PATH];          /* the QL's mdv1_, mdv2_ */
     char host_dir[SET_PATH];        /* a host folder as a drive (WIN2_ / mdv2_), see hostdir.h */
     int scale, fullscreen, speed, sound;
+    int display;                    /* the display SMSQ/E starts in (DISPLAY_*) */
     int launcher;                   /* show the launcher when openql starts with nothing to do */
     int seen;                       /* 0 until a settings file has been read or written */
 } settings;
@@ -44,5 +46,6 @@ int file_exists(const char *path);
 
 const char *speed_name(int speed);
 const char *scale_name(int scale);
+const char *display_name(int display);
 
 #endif

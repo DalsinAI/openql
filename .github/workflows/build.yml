@@ -57,6 +57,26 @@ jobs:
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ff0000 100000              # its windows
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" 00ff00 200 0,408,1024,512  # the line typed, in #0
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ffffff 60 516,2,600,24     # the 42, in #1
+      - name: SMSQ/E starts in 16-bit colour at 512 x 256 and 1024 x 512
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          ./openql -g high -H 12 -i 'type:PRINT 6*7\n@8' -o "$RUNNER_TEMP/high.ppm" 2> "$RUNNER_TEMP/high.txt"
+          grep -q "the display: high colour 512 x 256" "$RUNNER_TEMP/high.txt"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/high.ppm" ffffff 60 516,2,600,24     # the 42, in #1, doubled
+          ./openql -g large -H 12 -i 'type:PRINT 6*7\n@8' -o "$RUNNER_TEMP/large.ppm" 2> "$RUNNER_TEMP/large.txt"
+          grep -q "the display: high colour 1024 x 512" "$RUNNER_TEMP/large.txt"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/large.ppm" ffffff 20 256,0,300,14    # the 42, in #1, pixel for pixel
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/large.ppm" ff0000 50000 0,0,512,256  # its windows, in the top left quarter
+      - name: The debugger stops the CPU at an address on both machines
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          ./openql -H 2 -b fe000080 > "$RUNNER_TEMP/bp-sql.txt"
+          cat "$RUNNER_TEMP/bp-sql.txt"
+          grep -q '^> fe000080  moveq   #\$0,d0' "$RUNNER_TEMP/bp-sql.txt"
+          ./openql -M ql -H 5 -b 38e > "$RUNNER_TEMP/bp-ql.txt"
+          grep -q 'stopped at \$0000038e' "$RUNNER_TEMP/bp-ql.txt"
+          rc=0; ./openql -M ql -H 1 -b 7fffe > /dev/null || rc=$?
+          test $rc -eq 3
       - name: A host folder as FLP2_ on the Super QL, written back
         run: |
           export OPENQL_ROMS="$RUNNER_TEMP/roms" XDG_DATA_HOME="$RUNNER_TEMP/data"

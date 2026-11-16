@@ -85,6 +85,7 @@ typedef struct superql {
     uint32_t ram_bytes;
     uint8_t *rom;                     /* SQL_ROM_BYTES, $FF past the image */
     uint32_t rom_len;
+    uint32_t rom_hash;                /* the ROM as it was read, for saved states */
     uint8_t *vram;
     uint8_t open[0x10000];            /* reads where nothing is */
     int low_rom;                      /* reads below $18000 from the ROM */
@@ -121,6 +122,11 @@ typedef struct superql {
 
 int sql_init(superql *s, const char *rom_path, uint32_t ram_mb);
 int sql_attach_disk(superql *s, const char *path, int read_only);   /* WIN1: an IDE disk on the primary channel */
+/* The display SMSQ/E starts in (SQL_D_QL4, SQL_D_SMALL: 512 x 256 in 16-bit
+ * colour, SQL_D_LARGE: 1024 x 512), set in its configuration in the ROM
+ * image (MenuConfig's "Initial display mode"), so at the next reset. 0, or
+ * -1: the ROM has no such item. */
+int sql_set_display(superql *s, int dmode);
 void sql_free(superql *s);
 void sql_reset(superql *s, int clear_ram);
 uint64_t sql_run(superql *s, uint64_t until);

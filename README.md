@@ -47,6 +47,7 @@ With options, openql starts that machine straight away:
 ./openql -M ql                      # a QL with Minerva: F1 or F2, then SuperBASIC
 ./openql -M ql -m 128               # a stock 128 KB QL
 ./openql -M ql -d games.mdv         # ... with a microdrive cartridge in mdv1_ (a second -d: mdv2_)
+./openql -g large -w QLE.WIN        # the Super QL in 16-bit colour at 1024 x 512
 ```
 
 | Option | What it does |
@@ -63,26 +64,40 @@ With options, openql starts that machine straight away:
 | `-s tcp:PORT`, `-s tcp:HOST:PORT` | ser1 as a null-modem cable over TCP, both ways: openql listens on 127.0.0.1:PORT, or connects to HOST:PORT. Two openqls joined this way can `COPY` files between them, and a terminal program (`nc 127.0.0.1 PORT`) can talk to the QL |
 | `-S FILE` | ser1's input: the file's bytes come in once, when a program opens ser1 |
 | `-p FILE` | The Super QL's LPT1 output |
+| `-g ql\|high\|large` | The display SMSQ/E starts in on the Super QL: `ql` (QL mode 4, as SMSQ/E comes), `high` (512 x 256 in 16-bit colour) or `large` (1024 x 512 in 16-bit colour). Set in SMSQ/E's own configuration ("Initial display mode", as MenuConfig sets it) in the ROM as openql loads it; the ROM file is not changed. The launcher and the F12 menu have it too |
 | `-F`, `-q` | Full screen; no sound |
 | `-l FILE` | Start from a saved state |
 | `-H SECONDS`, `-o FILE.ppm`, `-O FILE` | No window: run that long as fast as the host goes, then save the screen (tests), or the machine's state |
 | `-i key:NAME@T`, `-i type:TEXT@T` | With `-H`, press a key (`f1` to `f10`, `enter`, `esc`, `space`, `tab`, the arrows) or type text (`\n` for ENTER) at T seconds, on either machine |
+| `-b ADDR` | With `-H`, stop when the CPU reaches ADDR (hex), print the registers and the code there, and end (status 3 if it never got there) |
 
-In the window, **F12** opens openql's menu: put a disk or cartridge in or take it out (or a new blank cartridge on the QL, or a host folder as FLP2_ on the Super QL), save the machine's state in one of four slots and load it again, type the host's clipboard in, change the speed (real time, 2x, 4x, or as fast as it goes) and the picture (4:3 at the window's size, 4:3 in whole pixels, or filling the window), go full screen, reset, or go back to the launcher. A saved state is the machine with its memory, for the same openql, ROM and memory size; the disks in the drives are not part of it.
+In the window, **F12** opens openql's menu: put a disk or cartridge in or take it out (or a new blank cartridge on the QL, or a host folder as FLP2_ on the Super QL), save the machine's state in one of four slots and load it again, type the host's clipboard in, change the speed (real time, 2x, 4x, or as fast as it goes) and the picture (4:3 at the window's size, 4:3 in whole pixels, or filling the window), go full screen, choose the Super QL's display for the next reset, reset, open the debugger, or go back to the launcher. A saved state is the machine with its memory, for the same openql, ROM and memory size; the disks in the drives are not part of it.
 
-Also: **F11** full screen, **Ctrl+Shift+V** types the clipboard in, **Ctrl+F8** as fast as it goes (again: back), **Ctrl+F12** the reset button, **Ctrl+Shift+F12** a power cycle, **Ctrl+F10** pause, **Ctrl+F9** takes the disk out of FLP1_ or the cartridge out of mdv1_ (with Shift, FLP2_ or mdv2_). Drop a floppy or microdrive image on the window to put it in FLP1_ or mdv1_ (hold Shift for the second drive). The QL has no Backspace or Delete, so those keys send CTRL with left or right, as QL typists did. F6 to F10 are SHIFT with F1 to F5. On the Super QL the host's pointer over the window moves SMSQ/E's pointer.
+Also: **F11** full screen, **Ctrl+Shift+V** types the clipboard in, **Ctrl+F8** as fast as it goes (again: back), **Ctrl+F12** the reset button, **Ctrl+Shift+F12** a power cycle, **Ctrl+F10** pause, **Ctrl+F11** the debugger, **Ctrl+F9** takes the disk out of FLP1_ or the cartridge out of mdv1_ (with Shift, FLP2_ or mdv2_). Drop a floppy or microdrive image on the window to put it in FLP1_ or mdv1_ (hold Shift for the second drive). The QL has no Backspace or Delete, so those keys send CTRL with left or right, as QL typists did. F6 to F10 are SHIFT with F1 to F5. On the Super QL the host's pointer over the window moves SMSQ/E's pointer.
+
+### The debugger
+
+**Ctrl+F11**, or **Debugger...** in the F12 menu, stops the CPU and opens the debugger beside the machine, a window of the host's own controls:
+
+- **Registers**: D0-D7, A0-A7, PC, SR with its flags, USP, SSP and VBR, each editable while the CPU is stopped (hex).
+- **Code**: the disassembly about the PC (68000 to 68040, the 68040's FPU and MMU instructions included), which it follows as the CPU stops; or type an address (hex, a register, or one plus or minus hex such as `a6+$20`) and Show. Click a line to choose it, double-click it to set or clear a breakpoint there.
+- **Break**, **Continue**, **Step** (one instruction), **Step over** (a `bsr`, `jsr`, `trap` or `dbcc` loop runs whole), **Run to here** (the line chosen).
+- **Memory**: 16 bytes a line, with their characters; **Write** puts bytes (hex) in RAM. Only RAM and ROM are shown: the hardware's registers show as `--`, since reading one could take a key from the keyboard's queue.
+
+Addresses are the CPU's: with SMSQ/E's MMU on, the debugger reads through the 68040's tables as the CPU would. Closing the window lets the machine run on; its breakpoints stay, and one that is reached opens the debugger again. A breakpoint costs speed while it is set (each instruction is checked), none once they are cleared.
 
 ## What is not done yet
 
-A host folder on the QL (which has only its microdrives) and as a hard disk (WIN2_); the QL's disks, and the QL's own network (QLAN) wire: two machines talk through ser1 over TCP instead. The QL's BEEP plays its pitch only (no sweeps or fuzz). See `docs/` for each board.
+A host folder on the QL (which has only its microdrives) and as a hard disk (WIN2_); the QL's disks, and the QL's own network (QLAN) wire: two machines talk through ser1 over TCP instead. Displays larger than 1024 x 512: that is the most the Q40 and Q60 boards had, and the most SMSQ/E's Q40 build drives. The QL's BEEP plays its pitch only (no sweeps or fuzz). See `docs/` for each board.
 
 ## Layout
 
 | Path | What it is |
 | --- | --- |
 | `src/openql.c` | The program: the window, keyboard, mouse and timing, the launcher and the menu |
-| `src/gui.c` | openql's own windows (the launcher and the F12 menu), made of the host's controls through libui-ng |
+| `src/gui.c` | openql's own windows (the launcher, the F12 menu and the debugger), made of the host's controls through libui-ng |
 | `src/settings.c` | The launcher's settings file and openql's folders |
+| `src/debug.c`, `src/cpu/dis68k.c` | The debugger's breakpoints, steps, registers and memory; the 68000 to 68040 disassembler |
 | `src/state.h` | Saved states' header and the CPU's part |
 | `src/hostser.c`, `src/hostdir.c` | ser1's host end (a file, TCP); a host folder as a QLWA disk |
 | `src/ql/` | The QL board, its cases (`ql_test.c`) and `qlrun`, a headless boot runner that types keys |

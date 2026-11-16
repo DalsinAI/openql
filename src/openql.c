@@ -6,7 +6,7 @@
  *
  *   openql [-L] [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]]
  *          [-D FOLDER] [-d MDV [-d MDV]] [-c CART] [-p PRINTER-FILE] [-s FILE|tcp:[HOST:]PORT] [-S FILE] [-F] [-q]
- *          [-l STATE] [-H SECONDS [-o FRAME.ppm] [-O STATE] [-i INPUT]...]
+ *          [-g ql|high|large] [-l STATE] [-H SECONDS [-o FRAME.ppm] [-O STATE] [-b ADDR] [-i INPUT]...]
  *
  *   -M  the machine: ql (a 68008 QL, Minerva) or superql (the default: a
  *       Q40/Q60-compatible board with a 68040, SMSQ/E)
@@ -29,19 +29,25 @@
  *       cable on 127.0.0.1:PORT both ways (openql listens), or tcp:HOST:PORT
  *       (openql connects: two openqls, or a terminal program)
  *   -S  ser1's input: the bytes of this file come in once, at the baud rate
+ *   -g  the display SMSQ/E starts in on the Super QL: ql (QL mode 4, as
+ *       SMSQ/E comes), high (512 x 256 in 16-bit colour) or large (1024 x
+ *       512 in 16-bit colour)
  *   -F  start full screen
  *   -q  no sound
  *   -H  run without a window for this many seconds, then stop (tests); -o
  *       writes the last frame there as a PPM
  *   -i  with -H, keys to press: key:NAME@T (f1..f10, enter, esc, space, tab,
  *       up, down, left, right) or type:TEXT@T (\n for ENTER), T in seconds
+ *   -b  with -H, stop at this address (hex), show the registers and the code
+ *       there, and end (status 3 if it was never reached)
  *
  *   -l  start from a saved state (-O saves one at the end of -H)
  *
  * In the window: F12 the menu (disks, saved states, speed, picture, paste,
  * the launcher), Ctrl+Shift+V types the clipboard in, Ctrl+F8 runs as fast
  * as the host goes, F11 full screen, Ctrl+F12 the reset button (RAM kept),
- * Ctrl+Shift+F12 a power cycle, Ctrl+F10 pause, Ctrl+F9 takes the disk out
+ * Ctrl+Shift+F12 a power cycle, Ctrl+F10 pause, Ctrl+F11 the debugger (the
+ * CPU stopped: registers, breakpoints, steps, code and memory), Ctrl+F9 takes the disk out
  * of FLP1_ or the cartridge out of mdv1_ (Ctrl+Shift+F9: FLP2_, mdv2_). A
  * file dropped on the window goes into FLP1_ or mdv1_ (FLP2_, mdv2_ with
  * Shift held). On the Super QL the host's pointer over the
@@ -57,6 +63,7 @@
 #include "hostser.h"
 #include "settings.h"
 #include "gui.h"
+#include "debug.h"
 #include <SDL.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -210,6 +217,7 @@ static void run_frame(void) {
 }
 
 static int halted(void) { return machine == M_QL ? q.cpu.halted : s.cpu.halted; }
+static ac090 *cpu(void) { return machine == M_QL ? &q.cpu : &s.cpu; }
 static uint32_t pc(void) { return machine == M_QL ? q.cpu.pc : s.cpu.pc; }
 
 static void render(uint32_t *rgb) {
@@ -565,6 +573,8 @@ static int machine_start(const settings *c, const char *cart) {
         memset(&s, 0, sizeof s);
         if (sql_init(&s, rom, (uint32_t)c->ram_sql_mb)) { say(UI_BAD, "the Super QL did not start: ROM %s", rom); return -1; }
         machine_up = 1;
+        if (sql_set_display(&s, SQL_D_QL4 + c->display) && c->display != DISPLAY_QL)
+            say(UI_ACCENT, "this ROM has no display setting: SMSQ/E starts as it is set up");
         if (c->win1[0] && sql_attach_disk(&s, c->win1, c->win1_ro)) { say(UI_BAD, "cannot open WIN1_'s %s", c->win1); machine_down(); return -1; }
         for (int i = 0; i < 2; i++)
             if (c->flp[i][0] && !(i == 1 && c->host_dir[0]) && sql_insert_floppy(&s, i, c->flp[i], 0)) { say(UI_BAD, "cannot open FLP%d_'s %s", i + 1, c->flp[i]); machine_down(); return -1; }
@@ -740,6 +750,13 @@ int app_start(void) {
 }
 
 int app_is_ql(void) { return machine == M_QL; }
+struct ac090 *app_cpu(void) { return machine_up ? cpu() : NULL; }
+void app_display(int display) {
+    cfg.display = display;
+    if (machine != M_SUPERQL || !machine_up) return;
+    if (sql_set_display(&s, SQL_D_QL4 + display)) say(UI_BAD, "this ROM has no display setting");
+    else say(UI_GOOD, "SMSQ/E starts in %s from the next reset", display_name(display));
+}
 int app_drive_in(int drive) { return machine == M_QL ? q.mdv[drive].tape != NULL : s.fdc.d[drive].f != NULL && !(drive == 1 && hd_in); }
 
 void app_insert(int drive, const char *path) {
@@ -854,7 +871,7 @@ static int run_window(void) {
     const uint64_t frame = freq / 50;
     for (;;) {
         SDL_Event e;
-        int open_menu = 0;
+        int open_menu = 0, open_debugger = 0;
         while (SDL_PollEvent(&e)) {
             switch (e.type) {
             case SDL_QUIT: return RUN_QUIT;
@@ -862,7 +879,10 @@ static int run_window(void) {
                 SDL_Scancode sc = e.key.keysym.scancode;
                 int ctrl = (e.key.keysym.mod & KMOD_CTRL) != 0, shift = (e.key.keysym.mod & KMOD_SHIFT) != 0, down = e.type == SDL_KEYDOWN;
                 if (sc == SDL_SCANCODE_F11) {
-                    if (down && !e.key.repeat) set_fullscreen(!cfg.fullscreen);
+                    if (down && !e.key.repeat) {
+                        if (ctrl) open_debugger = gui_ok;
+                        else set_fullscreen(!cfg.fullscreen);
+                    }
                     break;
                 }
                 if (sc == SDL_SCANCODE_F12) {
@@ -930,21 +950,30 @@ static int run_window(void) {
             if (use_launcher) settings_save(&cfg, settings_path());
             if (m == GUI_QUIT) return RUN_QUIT;
             if (m == GUI_SETTINGS) return RUN_SETTINGS;
+            if (m == GUI_DEBUG) open_debugger = 1;
             if (cfg.fullscreen || was_full) set_fullscreen(cfg.fullscreen);
             SDL_RaiseWindow(win);
             SDL_ShowCursor(machine == M_SUPERQL ? SDL_DISABLE : SDL_ENABLE);
             aim_x = aim_y = -1;
             next = SDL_GetPerformanceCounter();
-            continue;
+            if (!open_debugger) continue;
         }
-        if (!paused) {
+        if (open_debugger) {
+            /* the debugger: the CPU stops where it is, the keys let go first */
+            for (int k = 0; k < 0x68; k++) raw_key((uint8_t)(k | 0x80));
+            if (cfg.fullscreen) set_fullscreen(0);
+            dbg_break(cpu());
+            gui_debug_open();
+        }
+        int held = dbg_stopped(cpu());
+        if (!paused && !held) {
             int speed = warp ? SPEED_MAX : cfg.speed;
             int frames = speed == SPEED_2 ? 2 : speed == SPEED_4 ? 4 : 1;
             uint64_t start = SDL_GetPerformanceCounter();
             for (int f = 0; ; f++) {
                 paste_frame();
                 run_frame();
-                if (halted()) break;
+                if (halted() || dbg_stopped(cpu())) break;
                 if (cfg.sound && audio) sound_frame();
                 else if (machine == M_SUPERQL) { int16_t junk[2 * 1024]; while (sql_audio_read(&s, junk, 1024) > 0) {} }
                 if (speed == SPEED_MAX ? SDL_GetPerformanceCounter() - start > frame * 4 / 5 : f + 1 >= frames) break;
@@ -955,7 +984,15 @@ static int run_window(void) {
             }
             render(pic);
             SDL_UpdateTexture(tex, NULL, pic, w * 4);
+            if (dbg_stopped(cpu()) && gui_ok && !gui_debug_is_open()) {   /* a breakpoint with the debugger closed */
+                if (cfg.fullscreen) set_fullscreen(0);
+                gui_debug_open();
+            }
+        } else if (held) {
+            render(pic);                        /* what a step drew */
+            SDL_UpdateTexture(tex, NULL, pic, w * 4);
         }
+        if (gui_ok) gui_debug_tick();
         present();
         next += frame;
         uint64_t t = SDL_GetPerformanceCounter();
@@ -966,10 +1003,26 @@ static int run_window(void) {
 
 /* ---- main ------------------------------------------------------------------------- */
 
+/* -b: the registers and the code where the CPU stopped */
+static void show_cpu(FILE *f) {
+    ac090 *c = cpu();
+    char t[160];
+    fprintf(f, "stopped at $%08x after %llu instructions\n", c->pc, (unsigned long long)c->instructions);
+    for (int i = 0; i < 8; i++) fprintf(f, "d%d %08x   a%d %08x\n", i, c->d[i], i, c->a[i]);
+    dbg_sr_text(ac090_get_sr(c), t, sizeof t);
+    fprintf(f, "sr %04x  %s\n", ac090_get_sr(c), t);
+    uint32_t a = dbg_back(c, c->pc, 3);
+    for (int i = 0; i < 10; i++) {
+        int len = dbg_disasm(c, a, t, sizeof t);
+        fprintf(f, "%s %08x  %s\n", a == c->pc ? ">" : " ", a, t);
+        a += (uint32_t)len;
+    }
+}
+
 static void usage(void) {
     fprintf(stderr, "usage: openql [-L] [-M ql|superql] [-r ROM] [-m RAM] [-w WIN1 [-R]] [-f FLP [-f FLP]] [-D FOLDER]\n"
                     "              [-d MDV [-d MDV]] [-c CART] [-p PRINTER-FILE] [-s FILE|tcp:[HOST:]PORT] [-S FILE] [-F] [-q]\n"
-                    "              [-l STATE] [-H SECONDS [-o FRAME.ppm] [-O STATE] [-i key:NAME@T | -i type:TEXT@T]...]\n");
+                    "              [-g ql|high|large] [-l STATE] [-H SECONDS [-o FRAME.ppm] [-O STATE] [-b ADDR] [-i key:NAME@T | -i type:TEXT@T]...]\n");
 }
 
 static void reset(int clear_ram) {
@@ -991,7 +1044,9 @@ int main(int argc, char **argv) {
     settings_default(&line);
     line.scale = cfg.scale;
     line.sound = cfg.sound;
-    while ((opt = getopt(argc, argv, "LM:r:m:w:Rf:D:d:c:p:s:S:FqH:o:i:l:O:h")) != -1) {
+    line.display = cfg.display;
+    const char *stop_at = NULL;
+    while ((opt = getopt(argc, argv, "LM:r:m:w:Rf:D:d:c:p:s:S:FqH:o:i:l:O:g:b:h")) != -1) {
         any = 1;
         switch (opt) {
         case 'L': force_launcher = 1; break;
@@ -1019,6 +1074,13 @@ int main(int argc, char **argv) {
         case 's': ser = optarg; break;
         case 'S': ser_in = optarg; break;
         case 'F': full = 1; break;
+        case 'g':
+            if (!strcmp(optarg, "ql")) line.display = DISPLAY_QL;
+            else if (!strcmp(optarg, "high")) line.display = DISPLAY_HIGH;
+            else if (!strcmp(optarg, "large")) line.display = DISPLAY_LARGE;
+            else { fprintf(stderr, "openql: no display %s (ql, high or large)\n", optarg); return 2; }
+            break;
+        case 'b': stop_at = optarg; break;
         case 'H': headless = atof(optarg); break;
         case 'o': dump = optarg; break;
         case 'O': state_out = optarg; break;
@@ -1063,14 +1125,26 @@ int main(int argc, char **argv) {
             fprintf(stderr, "openql: %s: %s\n", state_in, why);
             return 1;
         }
-        for (long f = 0; f < (long)(headless * 50) && !halted(); f++) { inputs_at(f / 50.0); run_frame(); }
+        uint32_t bp = 0;
+        if (stop_at) {
+            if (dbg_parse(cpu(), stop_at, &bp)) { fprintf(stderr, "openql: -b %s is not an address\n", stop_at); return 2; }
+            dbg_bp_toggle(cpu(), bp);
+        }
+        for (long f = 0; f < (long)(headless * 50) && !halted() && !dbg_stopped(cpu()); f++) { inputs_at(f / 50.0); run_frame(); }
         if (halted()) fprintf(stderr, "openql: the CPU halted (double fault) at pc %08x\n", pc());
+        int missed = 0;
+        if (stop_at && dbg_stopped(cpu())) show_cpu(stdout);
+        else if (stop_at) { fprintf(stderr, "openql: $%08x was not reached\n", bp & ~1u); missed = 1; }
         render(pic);
         if (dump) save_ppm(dump, pic);
         if (state_out && (machine == M_QL ? ql_save_state(&q, state_out, &why) : sql_save_state(&s, state_out, &why)))
             fprintf(stderr, "openql: %s: %s\n", state_out, why);
         fprintf(stderr, "openql: pc %08x after %.1f s\n", pc(), headless);
-        int rc = halted() ? 1 : 0;
+        if (machine == M_SUPERQL) {
+            static const char *const dm[4] = { "QL mode 8", "QL mode 4", "high colour 512 x 256", "high colour 1024 x 512" };
+            fprintf(stderr, "openql: the display: %s\n", dm[s.dmode & 3]);
+        }
+        int rc = halted() ? 1 : missed ? 3 : 0;
         machine_down();
         free(pic);
         hostser_close(ser1);
