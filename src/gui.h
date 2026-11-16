@@ -38,9 +38,11 @@ int app_drive_in(int drive);             /* FLP or mdv 0/1 holds something */
 void app_insert(int drive, const char *path);
 void app_eject(int drive);
 void app_blank_cartridge(void);
-int app_hostdir_in(void);
-void app_hostdir_insert(const char *folder);
-void app_hostdir_write(void);
+int app_hostdir_in(void);                /* a host folder is a drive */
+const char *app_hostdir_drive(void);     /* which: "WIN2_" (Super QL) or "DOS1_" (QL) */
+void app_hostdir_insert(const char *folder);   /* the Super QL is reset to find it */
+void app_hostdir_remove(void);
+void app_hostdir_write(void);            /* WIN2_'s files back to the folder now */
 int app_state(int save, int slot);       /* 0, or -1 (app_status says why) */
 int app_state_exists(int slot);
 void app_paste(void);

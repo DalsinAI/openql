@@ -154,7 +154,7 @@ static struct launcher {
     uiLabel *rom;
     uiButton *rom_choose, *rom_default;
     uiGroup *disks_sql, *disks_ql;
-    disk_row win1, flp[2], host, mdv[2];
+    disk_row win1, flp[2], host, host_ql, mdv[2];
     uiCheckbox *win1_ro, *full, *sound, *at_start;
     uiButton *qle, *fetch, *start, *quit;
     uiLabel *qle_note, *status;
@@ -182,9 +182,9 @@ static void launcher_refresh(void) {
     uiCheckboxSetChecked(L.win1_ro, c->win1_ro);
     enable(uiControl(L.win1_ro), c->win1[0] != 0);
     path_text(L.flp[0].path, c->flp[0], "Empty");
-    path_text(L.flp[1].path, c->host_dir[0] ? "" : c->flp[1], c->host_dir[0] ? "The host folder below" : "Empty");
-    enable(uiControl(L.flp[1].choose), !c->host_dir[0]);
+    path_text(L.flp[1].path, c->flp[1], "Empty");
     path_text(L.host.path, c->host_dir, "None");
+    path_text(L.host_ql.path, c->host_dir, "None");
     path_text(L.mdv[0].path, c->mdv[0], "Empty");
     path_text(L.mdv[1].path, c->mdv[1], "Empty");
     int busy = app_fetch_busy();
@@ -334,7 +334,7 @@ static void launcher_build(void) {
     uiGridAppend(sg, uiControl(L.win1_ro), 1, 1, 1, 1, 1, uiAlignStart, 0, uiAlignCenter);
     disk_row_add(sg, 2, &L.flp[0], "FLP1_ floppy");
     disk_row_add(sg, 3, &L.flp[1], "FLP2_ floppy");
-    disk_row_add(sg, 4, &L.host, "Host folder as FLP2_");
+    disk_row_add(sg, 4, &L.host, "Host folder as WIN2_");
     L.flp[0].target = L.cfg->flp[0];
     L.flp[1].target = L.cfg->flp[1];
     L.host.target = L.cfg->host_dir;
@@ -348,12 +348,15 @@ static void launcher_build(void) {
     uiGridSetPadded(qg, 1);
     disk_row_add(qg, 0, &L.mdv[0], "mdv1_ cartridge");
     disk_row_add(qg, 1, &L.mdv[1], "mdv2_ cartridge");
+    disk_row_add(qg, 2, &L.host_ql, "Host folder as DOS1_");
     L.mdv[0].target = L.cfg->mdv[0];
     L.mdv[1].target = L.cfg->mdv[1];
-    L.disks_ql = group("Microdrives", uiControl(qg));
+    L.host_ql.target = L.cfg->host_dir;
+    L.host_ql.folder = 1;
+    L.disks_ql = group("Drives", uiControl(qg));
     uiBoxAppend(body, uiControl(L.disks_ql), 0);
-    disk_row *rows[] = { &L.win1, &L.flp[0], &L.flp[1], &L.host, &L.mdv[0], &L.mdv[1] };
-    for (int i = 0; i < 6; i++) {
+    disk_row *rows[] = { &L.win1, &L.flp[0], &L.flp[1], &L.host, &L.host_ql, &L.mdv[0], &L.mdv[1] };
+    for (int i = 0; i < 7; i++) {
         uiButtonOnClicked(rows[i]->choose, on_disk_choose, rows[i]);
         uiButtonOnClicked(rows[i]->eject, on_disk_eject, rows[i]);
         rows[i]->drive = -1;
@@ -419,8 +422,8 @@ int gui_launcher(settings *cfg) {
 static struct menu {
     settings *cfg;
     uiWindow *win;
-    disk_row disk[2];
-    uiButton *blank, *host, *host_write;
+    disk_row disk[2], hostdir;
+    uiButton *blank, *host_write;
     uiLabel *win1;
     uiCombobox *slot, *speed, *scale;
     uiButton *save, *load, *paste, *reset, *power, *settings, *quit, *resume;
@@ -437,13 +440,16 @@ static void menu_refresh(void) {
         snprintf(t, sizeof t, ql ? "mdv%d_" : "FLP%d_", i + 1);
         uiLabelSetText(M.disk[i].name, t);
         const char *in = ql ? M.cfg->mdv[i] : M.cfg->flp[i];
-        if (!ql && i == 1 && app_hostdir_in()) path_text(M.disk[i].path, M.cfg->host_dir, "");
-        else path_text(M.disk[i].path, app_drive_in(i) ? in : "", "Empty");
-        enable(uiControl(M.disk[i].eject), app_drive_in(i) || (!ql && i == 1 && app_hostdir_in()));
+        path_text(M.disk[i].path, app_drive_in(i) ? in : "", "Empty");
+        enable(uiControl(M.disk[i].eject), app_drive_in(i));
         M.disk[i].target = ql ? M.cfg->mdv[i] : M.cfg->flp[i];
     }
     show(uiControl(M.blank), ql);
-    show(uiControl(M.host), !ql);
+    /* the host folder: WIN2_ on the Super QL, DOS1_ on the QL */
+    snprintf(t, sizeof t, "%s host folder", app_hostdir_drive());
+    uiLabelSetText(M.hostdir.name, t);
+    path_text(M.hostdir.path, app_hostdir_in() ? M.cfg->host_dir : "", "None");
+    enable(uiControl(M.hostdir.eject), app_hostdir_in());
     show(uiControl(M.host_write), !ql);
     enable(uiControl(M.host_write), app_hostdir_in());
     show(uiControl(M.win1), !ql);
@@ -474,6 +480,7 @@ static void m_host(uiButton *b, void *d) {
     if (p) { app_hostdir_insert(p); uiFreeText(p); }
     menu_refresh();
 }
+static void m_host_remove(uiButton *b, void *d) { (void)b; (void)d; app_hostdir_remove(); menu_refresh(); }
 static void m_host_write(uiButton *b, void *d) { (void)b; (void)d; app_hostdir_write(); menu_refresh(); }
 static void m_slot(uiCombobox *c, void *d) { (void)c; (void)d; menu_refresh(); }
 static void m_save(uiButton *b, void *d) { (void)b; (void)d; app_state(1, uiComboboxSelected(M.slot) + 1); menu_refresh(); }
@@ -507,16 +514,19 @@ static void menu_build(void) {
         uiButtonOnClicked(M.disk[i].choose, m_choose, &M.disk[i]);
         uiButtonOnClicked(M.disk[i].eject, m_eject, &M.disk[i]);
     }
+    /* the host folder; on the Super QL a change starts SMSQ/E again */
+    disk_row_add(g, 2, &M.hostdir, "Host folder");
+    M.hostdir.drive = -1;
+    uiButtonOnClicked(M.hostdir.choose, m_host, NULL);
+    uiButtonOnClicked(M.hostdir.eject, m_host_remove, NULL);
+    uiButtonSetText(M.hostdir.eject, "Remove");
     uiBoxAppend(dv, uiControl(g), 0);
     uiBox *more = hbox();
     M.blank = uiNewButton("New blank cartridge");
-    M.host = uiNewButton("Host folder as FLP2_\xe2\x80\xa6");
-    M.host_write = uiNewButton("Write FLP2_ to the folder now");
+    M.host_write = uiNewButton("Write WIN2_ to the folder now");
     uiButtonOnClicked(M.blank, m_blank, NULL);
-    uiButtonOnClicked(M.host, m_host, NULL);
     uiButtonOnClicked(M.host_write, m_host_write, NULL);
     uiBoxAppend(more, uiControl(M.blank), 0);
-    uiBoxAppend(more, uiControl(M.host), 0);
     uiBoxAppend(more, uiControl(M.host_write), 0);
     uiBoxAppend(dv, uiControl(more), 0);
     M.win1 = uiNewLabel("");

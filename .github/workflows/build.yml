@@ -57,14 +57,30 @@ jobs:
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ff0000 100000              # its windows
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" 00ff00 200 0,408,1024,512  # the line typed, in #0
           python3 -I tests/boot_check.py "$RUNNER_TEMP/sql.ppm" ffffff 60 516,2,600,24     # the 42, in #1
-      - name: A host folder as FLP2_ on the Super QL, written back
+      - name: A host folder as WIN2_ on the Super QL (beside WIN1_), written back
         run: |
           export OPENQL_ROMS="$RUNNER_TEMP/roms" XDG_DATA_HOME="$RUNNER_TEMP/data"
-          mkdir -p "$RUNNER_TEMP/folder"
+          mkdir -p "$RUNNER_TEMP/folder/progs"
           printf '10 PRINT "FROM THE HOST"\n' > "$RUNNER_TEMP/folder/hello.bas"
-          ./openql -D "$RUNNER_TEMP/folder" -H 26 -i 'type:LOAD flp2_hello_bas\n@8' -i 'type:20 PRINT 6*7\n@11' -i 'type:SAVE_O flp2_hello_bas\n@14' -i 'type:SAVE flp2_new_bas\n@18'
+          head -c 3000000 /dev/urandom > "$RUNNER_TEMP/folder/big.bin"     # more than a floppy holds
+          ./openql -D "$RUNNER_TEMP/folder" -H 60 -i 'type:LOAD win2_hello_bas\n@8' -i 'type:20 PRINT 6*7\n@11' -i 'type:SAVE_O win2_hello_bas\n@14' -i 'type:SAVE win2_progs_new_bas\n@18' -i 'type:COPY win2_big_bin TO win2_big2_bin\n@22'
           grep -q "PRINT 6\*7" "$RUNNER_TEMP/folder/hello.bas"
-          grep -q "FROM THE HOST" "$RUNNER_TEMP/folder/new_bas"
+          grep -q "FROM THE HOST" "$RUNNER_TEMP/folder/progs/new_bas"
+          cmp "$RUNNER_TEMP/folder/big.bin" "$RUNNER_TEMP/folder/big2_bin"
+          mkdir -p "$RUNNER_TEMP/w1" && printf '10 PRINT "ON WIN1"\n' > "$RUNNER_TEMP/w1/one.bas"
+          ./openql -D "$RUNNER_TEMP/w1" -H 1 && cp "$XDG_DATA_HOME/openql/host-folder-win2.win" "$RUNNER_TEMP/w1.win"
+          ./openql -w "$RUNNER_TEMP/w1.win" -D "$RUNNER_TEMP/folder" -H 20 -i 'type:LOAD win1_one_bas\n@8' -i 'type:SAVE win2_one_bas\n@12'
+          grep -q "ON WIN1" "$RUNNER_TEMP/folder/one_bas"
+      - name: A host folder as DOS1_ on the QL, read and written as it goes
+        run: |
+          export OPENQL_ROMS="$RUNNER_TEMP/roms"
+          d="$RUNNER_TEMP/dos" && mkdir -p "$d/progs"
+          printf '10 PRINT "FROM THE HOST"\n' > "$d/hello.bas"
+          ./openql -M ql -D "$d" -H 40 -i key:f1@3 -i 'type:LOAD dos1_hello_bas\n@6' -i 'type:20 PRINT 6*7\n@10' -i 'type:SAVE dos1_progs_new_bas\n@14' -i 'type:SEXEC dos1_prog_exe,131072,32,4096\n@20' -i 'type:DELETE dos1_hello_bas\n@26' -i 'type:DIR dos1_\n@30' -o "$RUNNER_TEMP/dos.ppm"
+          grep -q "FROM THE HOST" "$d/progs/new_bas" && grep -q "PRINT 6\*7" "$d/progs/new_bas"
+          test "$(wc -c < "$d/prog_exe")" -eq 40 && tail -c 8 "$d/prog_exe" | od -An -tx1 | grep -q "58 54 63 63 00 00 10 00"
+          test ! -e "$d/hello.bas" && test -e "$d/.openql-deleted/hello_bas"
+          python3 -I tests/boot_check.py "$RUNNER_TEMP/dos.ppm" ffffff 100 258,1,512,60   # DIR's names, in #1
       - name: Serial input reaches SuperBASIC on both machines
         run: |
           export OPENQL_ROMS="$RUNNER_TEMP/roms"

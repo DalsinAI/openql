@@ -24,6 +24,7 @@ Not yet: floppies or a hard disk, the QL's own network (QLAN), BEEP's sweeps and
 | File | What it is |
 | --- | --- |
 | `ql.h`, `ql.c` | The board |
+| `qldos.h`, `qldos.c`, `qldos.s` | DOS1_, a host folder as a drive: a directory driver of openql's own in the empty ROM port (188 bytes of 68000, linked in with MT.LDD at boot), whose open, I/O and close are line A words ($A0D1-$A0D3) that openql takes through the CPU's guard hook and does on the host's files. QDOS's io_fopen does the names and the channel blocks |
 | `qlrun.c` | Boots a ROM headless, saves the screen each second as PPM, types keys (`-i key:f1@3 -i 'type:PRINT 1\n@6'`) |
 | `ql_test.c` | The board's cases without a ROM (`make test`) |
 | `../openql.c` | The window: the host's keys on the QL's keyboard (Backspace and Del are CTRL with an arrow, F6-F10 are SHIFT with F1-F5), and BEEP |
