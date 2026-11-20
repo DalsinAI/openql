@@ -13,7 +13,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lumavault]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -119,6 +119,7 @@ jobs:
 
   # openql's own windows are the host's controls (libui-ng): these build them on the other two
   windows:
+    if: false   # Windows/macOS/ARM64 off for now (Dale, 20 Nov 2026); back on bigguy when its docker images are there
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
@@ -134,6 +135,7 @@ jobs:
       - run: make test
 
   macos:
+    if: false   # Windows/macOS/ARM64 off for now (Dale, 20 Nov 2026); back on bigguy when its docker images are there
     runs-on: macos-15-intel
     timeout-minutes: 15
     steps:
@@ -144,6 +146,7 @@ jobs:
   # ARM64: Linux (a Raspberry Pi's 64-bit OS) and Apple silicon, where the
   # 68040's FPU is the integer one (src/cpu/fpu_soft.c), not the x87.
   build-arm64:
+    if: false   # Windows/macOS/ARM64 off for now (Dale, 20 Nov 2026); back on bigguy when its docker images are there
     strategy:
       fail-fast: false
       matrix:
