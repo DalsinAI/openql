@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   linux:
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, lumavault]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -137,7 +137,7 @@ jobs:
   publish:
     if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.version, 'v')
     needs: [linux, linux-arm64, windows, macos, macos-arm64]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lumavault]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
